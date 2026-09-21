@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
+import { doc, updateDoc, increment } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { soundFX } from '../utils/audio';
-import { validateTicketOffline, getCurrentFestivalDay } from '../utils/offline-validator';
-import { syncValidationDataset, queueScan, processSyncQueue } from '../utils/sync-engine';
-import { localDB, setConfig, getConfig } from '../lib/db-local';
 import { TIER_WRISTBANDS, useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import PinLock from '../components/PinLock';
@@ -24,11 +23,12 @@ import {
   Volume2,
   Smartphone,
   ChevronDown,
+  Terminal,
   Wifi,
-  WifiOff,
-  History,
-  Terminal
+  WifiOff
 } from 'lucide-react';
+
+import { executeAtomicCheckIn } from '../utils/atomic-checkin';
 
 const GATE_LOCATIONS = [
   'Gate 1 - Main North Entrance',
@@ -38,14 +38,12 @@ const GATE_LOCATIONS = [
 ];
 
 export default function GatekeeperScanner() {
-  const { userRole } = useAuth();
+  const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(true);
   const [hasPin, setHasPin] = useState(!!localStorage.getItem('gcc_gate_pin_hash'));
-
   const [selectedGate, setSelectedGate] = useState(GATE_LOCATIONS[0]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [syncing, setSyncing] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Scanner states
@@ -59,17 +57,13 @@ export default function GatekeeperScanner() {
   const processingRef = useRef(false);
 
   useEffect(() => {
-    setIsAuthenticated(['gatekeeper', 'gate_supervisor', 'executive_admin'].includes(userRole));
-  }, [userRole]);
+    // Derive role from email or claims for Spark compatibility
+    const isAdmin = userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com';
+    const isGate = userRole === 'gatekeeper' || currentUser?.email?.startsWith('qrscanner');
+    setIsAuthenticated(isAdmin || isGate);
+  }, [userRole, currentUser]);
 
   useEffect(() => {
-    const init = async () => {
-      const savedGate = await getConfig('assigned_gate');
-      if (savedGate) setSelectedGate(savedGate);
-      setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
-    };
-    init();
-
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
@@ -80,75 +74,37 @@ export default function GatekeeperScanner() {
     };
   }, []);
 
-  useEffect(() => {
-    if (isOnline && isAuthenticated) handleSync();
-  }, [isOnline, isAuthenticated]);
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    try {
-      await processSyncQueue();
-      await syncValidationDataset();
-      setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleGateChange = async (gate) => {
-    setSelectedGate(gate);
-    await setConfig('assigned_gate', gate);
-  };
-
   const handleSetPin = (hash) => {
     localStorage.setItem('gcc_gate_pin_hash', hash);
     setHasPin(true);
     setIsLocked(false);
   };
 
-  const processTicketCode = async (rawPayload) => {
-    if (processingRef.current) return;
+  const processTicketCode = async (rawCode) => {
+    const cleanCode = (rawCode || '').trim().toUpperCase();
+    if (!cleanCode || processingRef.current) return;
     processingRef.current = true;
     setIsProcessing(true);
-    setScannedResult(null);
 
-    const startTime = performance.now();
     try {
-      const result = await validateTicketOffline(rawPayload);
-      await localDB.performanceLogs.add({
-        event: 'QR_SCAN', status: result.status,
-        duration: performance.now() - startTime,
-        timestamp: Date.now()
-      });
+      const result = await executeAtomicCheckIn(cleanCode, selectedGate);
 
       if (result.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
-        await queueScan({
-          tid: result.attendee.tid, uid: result.attendee.uid,
-          gateId: selectedGate, timestamp: Date.now(),
-          eventDay: getCurrentFestivalDay(), source: isOnline ? 'HYBRID' : 'OFFLINE'
-        });
-        setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
-        if (isOnline) processSyncQueue();
+
+        // Manual stats increment for Spark
+        const statsRef = doc(db, 'eventStats', 'global');
+        await updateDoc(statsRef, { totalCheckedIn: increment(1) });
       } else {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();
       }
 
-      setScannedResult({
-        ...result,
-        data: result.attendee ? {
-          fullName: result.attendee.fullName || 'Registered Guest',
-          ticketCode: result.attendee.tid,
-          tier: result.attendee.t,
-          checkedInAt: new Date().toLocaleTimeString()
-        } : null
-      });
-
+      setScannedResult(result);
     } catch (err) {
-      setScannedResult({ status: 'INVALID', message: 'LOCAL VERIFICATION ERROR' });
+      console.error('Scanner error:', err);
+      setScannedResult({ status: 'INVALID', message: 'SYSTEM ERROR' });
     } finally {
       setIsProcessing(false);
       setTimeout(() => { processingRef.current = false; }, 1500);
@@ -162,7 +118,11 @@ export default function GatekeeperScanner() {
       if (scannerRef.current) await scannerRef.current.stop().catch(() => {});
       const html5Qr = new Html5Qrcode('gatekeeper-reader');
       scannerRef.current = html5Qr;
-      await html5Qr.start({ facingMode: 'environment' }, { fps: 25, qrbox: (w, h) => { const s = Math.min(w, h) * 0.7; return { width: s, height: s }; } }, (text) => processTicketCode(text));
+      await html5Qr.start(
+        { facingMode: 'environment' },
+        { fps: 25, qrbox: (w, h) => { const s = Math.min(w, h) * 0.7; return { width: s, height: s }; } },
+        (text) => processTicketCode(text)
+      );
       setCameraActive(true);
     } catch (err) {
       setCameraError('Camera unavailable or permission denied.');
@@ -202,7 +162,6 @@ export default function GatekeeperScanner() {
               ) : (
                 <Badge variant="error" className="bg-rose-950/40 text-rose-400 border-rose-900/50">OFFLINE MODE</Badge>
               )}
-              {pendingSyncCount > 0 && <span className="text-[10px] font-black text-amber-500 animate-pulse">{pendingSyncCount} QUEUED</span>}
             </div>
           </div>
         </div>
@@ -210,7 +169,7 @@ export default function GatekeeperScanner() {
         <div className="flex items-center gap-2">
           <select
             value={selectedGate}
-            onChange={(e) => handleGateChange(e.target.value)}
+            onChange={(e) => setSelectedGate(e.target.value)}
             className="flex-1 sm:w-48 bg-slate-800 border-none rounded-lg px-3 py-2 text-xs font-bold text-slate-300 focus:ring-2 focus:ring-emerald-500 transition-all appearance-none cursor-pointer"
           >
             {GATE_LOCATIONS.map(g => <option key={g} value={g}>{g}</option>)}
