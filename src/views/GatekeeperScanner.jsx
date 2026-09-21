@@ -3,6 +3,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { soundFX } from '../utils/audio';
+import { executeAtomicCheckIn } from '../utils/atomic-checkin';
 import { TIER_WRISTBANDS, useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
@@ -65,76 +66,33 @@ export default function GatekeeperScanner() {
   const processTicketCode = async (rawCode) => {
     const cleanCode = (rawCode || '').trim().toUpperCase();
     if (!cleanCode || processingRef.current) return;
-
     processingRef.current = true;
     setIsProcessing(true);
 
     try {
-      // Query Firestore for attendee with this ticketCode
-      const attendeesRef = collection(db, 'attendees');
-      const q = query(attendeesRef, where('ticketCode', '==', cleanCode));
-      const querySnap = await getDocs(q);
+      const result = await executeAtomicCheckIn(cleanCode, selectedGate);
 
-      if (querySnap.empty) {
-        // Ticket code not found
+      if (result.status === 'VALID') {
+        soundFX.playSuccessChime();
+        soundFX.triggerSuccessHaptic();
+      } else if (result.status === 'DUPLICATE') {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();
-        setScannedResult({
-          status: 'INVALID',
-          code: cleanCode,
-          message: 'INVALID TICKET CODE — No registration record found in system.'
-        });
       } else {
-        const attendeeDoc = querySnap.docs[0];
-        const data = attendeeDoc.data();
-        const wristbandColor = data.wristbandColor || TIER_WRISTBANDS[data.tier] || 'Emerald Green';
-
-        if (data.status === 'REGISTERED') {
-          // VALID FIRST SCAN
-          const now = new Date();
-          const scanTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          const scanFullDate = now.toISOString();
-          
-          // Optimistically and asynchronously update Firestore
-          await updateDoc(doc(db, 'attendees', attendeeDoc.id), {
-            status: 'CHECKED_IN',
-            checkedInAt: scanTime,
-            checkedInFullDate: scanFullDate,
-            checkedInBy: selectedGate
-          });
-
-          // Audio and Haptic feedback
-          soundFX.playSuccessChime();
-          soundFX.triggerSuccessHaptic();
-
-          setScannedResult({
-            status: 'VALID',
-            data: { ...data, status: 'CHECKED_IN', checkedInAt: scanTime, checkedInFullDate: scanFullDate, checkedInBy: selectedGate },
-            wristbandColor,
-            message: `VALID ENTRY — ISSUE ${wristbandColor.toUpperCase()} WRISTBAND`
-          });
-        } else if (data.status === 'CHECKED_IN') {
-          // FLAGGED DUPLICATE ENTRY
-          soundFX.playWarningBuzzer();
-          soundFX.triggerDuplicateHaptic();
-
-          setScannedResult({
-            status: 'DUPLICATE',
-            data,
-            wristbandColor,
-            message: `FLAGGED: DUPLICATE ENTRY. Pass already scanned at ${data.checkedInAt || 'prior time'} by ${data.checkedInBy || 'Gate'}. Do NOT issue duplicate band.`
-          });
-        }
+        soundFX.playWarningBuzzer();
+        soundFX.triggerDuplicateHaptic();
       }
+
+      setScannedResult(result);
     } catch (err) {
       console.error('Ticket verification error:', err);
       setScannedResult({
         status: 'INVALID',
-        message: 'SYSTEM ERROR — Verification failed. Please check network connection.'
+        code: cleanCode,
+        message: 'SYSTEM ERROR: Verification failed. Please check network connection.'
       });
     } finally {
       setIsProcessing(false);
-      // Brief cool-down to prevent double reading within 1.5s
       setTimeout(() => {
         processingRef.current = false;
       }, 1500);

@@ -31,13 +31,27 @@ export const TIER_LABELS = {
   VIP_PLATINUM: 'Platinum Executive VIP',
 };
 
-// Generates unique ticket code conforming to GCC specifications
+// High-entropy, collision-resistant code generator
 export function generateTicketCode(tier = 'REGULAR') {
-  const randomNum = Math.floor(1000 + Math.random() * 9000);
-  if (tier === 'VIP_SILVER') return `GCC-VIP-SLVR-${randomNum}`;
-  if (tier === 'VIP_GOLD') return `GCC-VIP-GOLD-${randomNum}`;
-  if (tier === 'VIP_PLATINUM') return `GCC-VIP-PLAT-${randomNum}`;
-  return `GCC-2026-${randomNum}`;
+  // Generate 8 alphanumeric entropy characters using crypto API if available
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let entropy = '';
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    const values = new Uint8Array(6);
+    window.crypto.getRandomValues(values);
+    for (let i = 0; i < values.length; i++) {
+      entropy += chars[values[i] % chars.length];
+    }
+  } else {
+    for (let i = 0; i < 6; i++) {
+      entropy += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+  }
+
+  if (tier === 'VIP_SILVER') return `GCC-VIP-SLVR-${entropy}`;
+  if (tier === 'VIP_GOLD') return `GCC-VIP-GOLD-${entropy}`;
+  if (tier === 'VIP_PLATINUM') return `GCC-VIP-PLAT-${entropy}`;
+  return `GCC-2026-${entropy}`;
 }
 
 export function AuthProvider({ children }) {

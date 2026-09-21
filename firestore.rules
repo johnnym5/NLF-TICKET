@@ -2,28 +2,50 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Enforce email verification to prevent arbitrary sign-up privilege escalations
+    function isVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == 'admin@gcc.com';
+      return isVerified() && request.auth.token.email == 'admin@gcc.com';
     }
 
     function isGatekeeper() {
-      return request.auth != null && (
+      return isVerified() && (
         request.auth.token.email == 'admin@gcc.com' ||
         request.auth.token.email.matches('qrscanner.*@gcc.com')
       );
     }
 
     match /attendees/{userId} {
-      // User can read their own record, or staff can read all
-      allow read: if request.auth != null && (request.auth.uid == userId || isGatekeeper());
+      // Attendees read their own pass; verified gatekeepers and admins can read all
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isGatekeeper());
 
-      // User can create their own record
-      allow create: if request.auth != null && request.auth.uid == userId;
+      // Only the authenticated account can create their initial pass record
+      allow create: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.data.status == 'REGISTERED'
+        && request.resource.data.tier in ['REGULAR', 'VIP_SILVER', 'VIP_GOLD', 'VIP_PLATINUM']
+        && request.resource.data.keys().hasAll([
+          'uid', 'fullName', 'email', 'ticketCode', 'tier',
+          'wristbandColor', 'status', 'createdAt', 'referralSource'
+        ]);
 
-      // Staff can update check-in status, Admins can update anything
-      allow update: if isAdmin() || (isGatekeeper() &&
+      // Gate staff can ONLY update status and check-in metadata on an existing REGISTERED document
+      allow update: if isAdmin() || (
+        isGatekeeper() &&
+        resource.data.status == 'REGISTERED' &&
+        request.resource.data.status == 'CHECKED_IN' &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy']));
+          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy'])
+      );
+
+      allow delete: if isAdmin();
     }
   }
 }

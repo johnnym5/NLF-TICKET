@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { TIER_WRISTBANDS, TIER_LABELS, useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
@@ -95,24 +95,32 @@ export default function AdminCommandConsole({ onNavigate }) {
       return;
     }
 
-    const checkInTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const checkInFullDate = new Date().toISOString();
     try {
-      await updateDoc(doc(db, 'attendees', attendee.id), {
-        status: 'CHECKED_IN',
-        checkedInAt: checkInTime,
-        checkedInFullDate: checkInFullDate,
-        checkedInBy: 'Admin Manual Override'
+      const attendeeRef = doc(db, 'attendees', attendee.id);
+      await runTransaction(db, async (transaction) => {
+        const freshSnap = await transaction.get(attendeeRef);
+        if (!freshSnap.exists()) throw new Error('Attendee record does not exist');
+
+        const freshData = freshSnap.data();
+        if (freshData.status === 'CHECKED_IN') {
+          alert(`Warning: Already checked in at ${freshData.checkedInAt} by ${freshData.checkedInBy}`);
+          return;
+        }
+
+        const now = new Date();
+        const checkInTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const checkInFullDate = now.toISOString();
+
+        transaction.update(attendeeRef, {
+          status: 'CHECKED_IN',
+          checkedInAt: checkInTime,
+          checkedInFullDate: checkInFullDate,
+          checkedInBy: 'Admin Manual Override'
+        });
       });
     } catch (err) {
-      console.warn('Manual check-in write fallback:', err);
-      setAttendees(prev => prev.map(a => a.id === attendee.id ? {
-        ...a,
-        status: 'CHECKED_IN',
-        checkedInAt: checkInTime,
-        checkedInFullDate: checkInFullDate,
-        checkedInBy: 'Admin Manual Override'
-      } : a));
+      console.error('Manual check-in failed:', err);
+      alert('Manual check-in override failed. Please verify your connection.');
     }
   };
 
