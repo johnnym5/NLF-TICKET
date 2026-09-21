@@ -40,11 +40,8 @@ service cloud.firestore {
       // Gatekeeper can read any pass for validation.
       allow read: if isAuthenticated() && (request.auth.uid == userId || isGatekeeper());
 
-      // Attendees cannot create their own records directly anymore; Cloud Function does it.
-      // However, we might allow it if we want to support some edge cases, but the prompt says
-      // "Move ticket issuance to trusted server-side logic."
-      // So we'll disable direct client creation of attendees.
-      allow create: if false;
+      // Allow client-side creation for Spark plan (since Functions are unavailable)
+      allow create: if isAuthenticated() && request.auth.uid == userId;
 
       // Only admins or supervisors can modify sensitive fields.
       // Gatekeepers can only update check-in status and metadata.
@@ -91,8 +88,8 @@ service cloud.firestore {
     }
 
     match /eventStats/{statId} {
-      allow read: if isSupervisor();
-      allow write: if false; // Only server-side writes
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated(); // Allow client-side increments for registrations
     }
 
     match /gateStats/{statId} {

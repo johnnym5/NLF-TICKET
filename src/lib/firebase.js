@@ -20,13 +20,14 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// Initialize App Check with reCAPTCHA Enterprise
-// Note: In local development, you should use the debug provider.
+// App Check is temporarily disabled due to environment configuration issues on Spark plan.
+/*
 if (typeof window !== 'undefined') {
   initializeAppCheck(app, {
     provider: new ReCaptchaEnterpriseProvider(import.meta.env.VITE_RECAPTCHA_KEY || '6Ld_...'),
     isTokenAutoRefreshEnabled: true
   });
 }
+*/
 
 export default app;

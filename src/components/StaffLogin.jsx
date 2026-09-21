@@ -64,7 +64,7 @@ export default function StaffLogin({ title, subtitle, allowedEmails, onSuccess }
             label="Staff ID / Email"
             type="email"
             required
-            placeholder="steward@gcc.com"
+            placeholder="Personnel ID"
             icon={Mail}
             value={email}
             onChange={(e) => setEmail(e.target.value)}

@@ -1,7 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../lib/firebase';
-import { useAuth } from '../context/AuthContext';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  orderBy,
+  limit,
+  startAfter,
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  increment,
+  onSnapshot
+} from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth, TIER_WRISTBANDS } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
@@ -43,13 +57,13 @@ export const ACCOUNT_TYPES = {
 };
 
 export default function AdminCommandConsole({ onNavigate }) {
-  const { userRole } = useAuth();
+  const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [stats, setStats] = useState({ totalRegistrations: 0, totalCheckedIn: 0, dayCheckins: {} });
   const [attendees, setAttendees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
-  const [lastId, setLastId] = useState(null);
+  const [lastVisible, setLastVisible] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [overrideModal, setOverrideModal] = useState({ open: false, attendee: null, action: '', reason: '' });
   const [roleModal, setRoleModal] = useState({ open: false, attendee: null });
@@ -58,33 +72,64 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [statusFilter, setStatusFilter] = useState('ALL');
 
   useEffect(() => {
-    setIsAuthenticated(userRole === 'executive_admin');
-  }, [userRole]);
+    setIsAuthenticated(userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com');
+  }, [userRole, currentUser]);
 
+  // Direct Firestore Stats Listener
   useEffect(() => {
     if (!isAuthenticated) return;
-    const fetchStats = async () => {
-      try {
-        const result = await httpsCallable(functions, 'getDashboardStats')();
-        setStats(result.data);
-      } catch (err) {}
-    };
-    fetchStats();
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
+
+    const statsRef = doc(db, 'eventStats', 'global');
+    const unsubscribe = onSnapshot(statsRef, (snap) => {
+      if (snap.exists()) {
+        setStats(snap.data());
+      }
+    });
+
+    return () => unsubscribe();
   }, [isAuthenticated]);
 
   const loadAttendees = async (reset = false) => {
     if (!isAuthenticated) return;
     setSearching(true);
     try {
-      const result = await httpsCallable(functions, 'searchAttendees')({
-        searchTerm, roleFilter, statusFilter, lastDocId: reset ? null : lastId, pageSize: 20
-      });
-      setAttendees(reset ? result.data.results : [...attendees, ...result.data.results]);
-      setLastId(result.data.lastId);
-      setHasMore(result.data.results.length === 20);
-    } catch (err) {} finally {
+      let q = collection(db, 'attendees');
+
+      // Applying filters
+      if (roleFilter !== 'ALL') {
+        q = query(q, where('tier', '==', roleFilter));
+      }
+      if (statusFilter !== 'ALL') {
+        q = query(q, where('status', '==', statusFilter));
+      }
+
+      // Pagination and Order
+      q = query(q, orderBy('createdAt', 'desc'));
+
+      if (!reset && lastVisible) {
+        q = query(q, startAfter(lastVisible));
+      }
+
+      q = query(q, limit(20));
+
+      const snapshot = await getDocs(q);
+      const results = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Client-side search fallback (Firestore doesn't support partial string match well)
+      const filteredResults = searchTerm
+        ? results.filter(a =>
+            a.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            a.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            a.ticketCode?.toLowerCase().includes(searchTerm.toLowerCase())
+          )
+        : results;
+
+      setAttendees(reset ? filteredResults : [...attendees, ...filteredResults]);
+      setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === 20);
+    } catch (err) {
+      console.error('Fetch error:', err);
+    } finally {
       setSearching(false);
       setLoading(false);
     }
@@ -93,15 +138,17 @@ export default function AdminCommandConsole({ onNavigate }) {
   useEffect(() => { if (isAuthenticated) loadAttendees(true); }, [isAuthenticated, roleFilter, statusFilter]);
 
   const handleSetRole = async (attendee, role) => {
-    if (!window.confirm(`Promote ${attendee.fullName} to ${role}? This will grant them administrative or operational privileges.`)) return;
+    if (!window.confirm(`Update ${attendee.fullName} role to ${role}?`)) return;
     try {
       setLoading(true);
-      await httpsCallable(functions, 'setOperatorRole')({ targetUid: attendee.id, role });
-      alert(`Role for ${attendee.fullName} updated to ${role}.`);
+      // On Spark plan, we update a role field in the document.
+      // Note: This won't update Custom Claims (requires functions), but we use email fallback anyway.
+      await updateDoc(doc(db, 'attendees', attendee.id), { role });
+      alert(`Role for ${attendee.fullName} updated to ${role} locally.`);
       setRoleModal({ open: false, attendee: null });
       loadAttendees(true);
     } catch (err) {
-      alert(`Role update failed: ${err.message}`);
+      alert(`Update failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -110,27 +157,43 @@ export default function AdminCommandConsole({ onNavigate }) {
   const performOverride = async () => {
     if (!overrideModal.reason || overrideModal.reason.length < 5) return;
     try {
-      await httpsCallable(functions, 'adminOverride')({
-        targetUid: overrideModal.attendee.id, action: overrideModal.action, newValue: overrideModal.newValue, reason: overrideModal.reason
-      });
+      const attendeeRef = doc(db, 'attendees', overrideModal.attendee.id);
+      const update = {
+        lastOverrideAt: serverTimestamp(),
+        lastOverrideBy: currentUser.uid,
+        lastOverrideReason: overrideModal.reason
+      };
+
+      if (overrideModal.action === 'REVOKE_ACCESS') {
+        update.accessRevoked = true;
+        update.status = 'REVOKED';
+      } else if (overrideModal.action === 'RESTORE_ACCESS') {
+        update.accessRevoked = false;
+        update.status = 'REGISTERED';
+      } else if (overrideModal.action === 'MANUAL_CHECKIN') {
+        update.status = 'CHECKED_IN';
+        update.checkedInBy = 'ADMIN_MANUAL';
+        update.checkedInAt = new Date().toLocaleTimeString();
+        update.checkedInFullDate = new Date().toISOString();
+      }
+
+      await updateDoc(attendeeRef, update);
       setOverrideModal({ open: false, attendee: null, action: '', reason: '' });
       loadAttendees(true);
     } catch (err) { alert(`Override failed: ${err.message}`); }
   };
 
-  const handleResetQrCode = async (attendee) => {
-    try { await httpsCallable(functions, 'replaceTicket')({ attendeeUid: attendee.id }); } catch (err) {}
-  };
-
-  const handleExportCsv = async () => {
-    try {
-      const result = await httpsCallable(functions, 'exportAttendees')();
-      const blob = new Blob([result.data.csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.setAttribute('download', result.data.filename);
-      link.click();
-    } catch (err) { alert(`Export failed: ${err.message}`); }
+  const handleExportCsv = () => {
+    if (attendees.length === 0) return;
+    const headers = ['Full Name', 'Email', 'Ticket Code', 'Tier', 'Status', 'Created At'];
+    const rows = attendees.map(a => [
+      `"${a.fullName}"`, `"${a.email}"`, `"${a.ticketCode}"`, `"${a.tier}"`, `"${a.status}"`, `"${a.createdAt}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", "attendees.csv");
+    link.click();
   };
 
   if (!isAuthenticated) return <StaffLogin title="Command Center" subtitle="Executive Access Restricted" allowedEmails={['admin@gcc.com']} onSuccess={() => setIsAuthenticated(true)} />;
