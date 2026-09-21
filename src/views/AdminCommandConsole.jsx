@@ -52,6 +52,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [lastId, setLastId] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [overrideModal, setOverrideModal] = useState({ open: false, attendee: null, action: '', reason: '' });
+  const [roleModal, setRoleModal] = useState({ open: false, attendee: null });
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -91,6 +92,21 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   useEffect(() => { if (isAuthenticated) loadAttendees(true); }, [isAuthenticated, roleFilter, statusFilter]);
 
+  const handleSetRole = async (attendee, role) => {
+    if (!window.confirm(`Promote ${attendee.fullName} to ${role}? This will grant them administrative or operational privileges.`)) return;
+    try {
+      setLoading(true);
+      await httpsCallable(functions, 'setOperatorRole')({ targetUid: attendee.id, role });
+      alert(`Role for ${attendee.fullName} updated to ${role}.`);
+      setRoleModal({ open: false, attendee: null });
+      loadAttendees(true);
+    } catch (err) {
+      alert(`Role update failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const performOverride = async () => {
     if (!overrideModal.reason || overrideModal.reason.length < 5) return;
     try {
@@ -117,10 +133,48 @@ export default function AdminCommandConsole({ onNavigate }) {
     } catch (err) { alert(`Export failed: ${err.message}`); }
   };
 
-  if (!isAuthenticated) return <StaffLogin title="Command Center" subtitle="Executive Access Restricted" allowedEmails={['admin@gcc.com']} onSuccess={() => {}} />;
+  if (!isAuthenticated) return <StaffLogin title="Command Center" subtitle="Executive Access Restricted" allowedEmails={['admin@gcc.com']} onSuccess={() => setIsAuthenticated(true)} />;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Role Management Modal */}
+      {roleModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl animate-slideUp">
+            <h2 className="text-xl font-black text-slate-900 mb-2">Manage User Permissions</h2>
+            <p className="text-xs text-slate-500 mb-8 uppercase tracking-widest font-bold">
+              User: <span className="text-slate-800">{roleModal.attendee.fullName}</span>
+            </p>
+
+            <div className="space-y-3 mb-8">
+              <button
+                onClick={() => handleSetRole(roleModal.attendee, 'attendee')}
+                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
+              >
+                <p className="text-sm font-black text-slate-900">Standard Attendee</p>
+                <p className="text-[10px] text-slate-500">Public access, view own pass only.</p>
+              </button>
+              <button
+                onClick={() => handleSetRole(roleModal.attendee, 'gatekeeper')}
+                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
+              >
+                <p className="text-sm font-black text-slate-900">Gatekeeper</p>
+                <p className="text-[10px] text-slate-500">Can access QR Scanner and check-in attendees.</p>
+              </button>
+              <button
+                onClick={() => handleSetRole(roleModal.attendee, 'executive_admin')}
+                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
+              >
+                <p className="text-sm font-black text-slate-900">Executive Admin</p>
+                <p className="text-[10px] text-slate-500">Full dashboard access and permission management.</p>
+              </button>
+            </div>
+
+            <Button variant="secondary" className="w-full" onClick={() => setRoleModal({ open: false, attendee: null })}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
       {/* Override Modal */}
       {overrideModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
@@ -257,6 +311,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                   </td>
                   <td className="px-6 py-5 text-right">
                     <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="secondary" size="sm" onClick={() => setRoleModal({ open: true, attendee })}>Permissions</Button>
                       <Button variant="secondary" size="sm" onClick={() => setOverrideModal({ open: true, attendee, action: 'MANUAL_CHECKIN', newValue: { eventDay: 'day1' }, reason: '' })}>Check-in</Button>
                       <Button variant="secondary" size="sm" icon={RotateCcw} onClick={() => handleResetQrCode(attendee)} title="Reset QR" />
                       <Button variant={attendee.accessRevoked ? 'primary' : 'danger'} size="sm" onClick={() => setOverrideModal({ open: true, attendee, action: attendee.accessRevoked ? 'RESTORE_ACCESS' : 'REVOKE_ACCESS', reason: '' })}>

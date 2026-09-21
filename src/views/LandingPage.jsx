@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth, TIER_LABELS, TIER_WRISTBANDS } from '../context/AuthContext';
 import { 
   Calendar, 
@@ -15,8 +15,12 @@ import CountdownTimer from '../components/CountdownTimer';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import { FESTIVAL_EXPERIENCES } from '../data/experienceData';
+import ExperienceDetailModal from '../components/ExperienceDetailModal';
 
 export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
+  const { currentUser } = useAuth();
+  const [selectedExperience, setSelectedExperience] = useState(null);
   const isVip = vipTier && vipTier !== 'REGULAR';
   const tierName = TIER_LABELS[vipTier] || 'General Entry';
   const wristbandColor = TIER_WRISTBANDS[vipTier] || TIER_WRISTBANDS.REGULAR;
@@ -77,7 +81,7 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
           <ScrollReveal delay={500}>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
               <Button size="lg" icon={ArrowRight} onClick={onClaimPass}>
-                Get My Entry Pass
+                {currentUser ? 'View My Digital Pass' : 'Get My Entry Pass'}
               </Button>
               <Button variant="secondary" size="lg" icon={Info}>
                 Event Schedule
@@ -134,44 +138,38 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
-          {[
-            {
-              title: 'Livestock Showcase',
-              desc: "Experience a grand parade of the nation's finest livestock including cows, goats, camels, and pedigree dogs.",
-              icon: Trophy,
-              variant: 'sage'
-            },
-            {
-              title: 'Cuisine Pavilion',
-              desc: 'Indulge in an explosion of traditional flavors featuring authentic Suya, grilled meats, and local milk delicacies.',
-              icon: Utensils,
-              variant: 'gold'
-            },
-            {
-              title: 'Cultural Gala',
-              desc: 'Enjoy three days of non-stop music, traditional dances, and vibrant pastoral heritage celebrations.',
-              icon: Music,
-              variant: 'rose'
-            }
-          ].map((item, idx) => (
-            <ScrollReveal key={idx} delay={200 * idx} className="h-full">
-              <div className="premium-card h-full p-8 hover:border-sage-border hover:shadow-lg group transition-all">
-                <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center mb-6 group-hover:bg-sage-light transition-colors">
-                  <item.icon className="w-6 h-6 text-slate-600 group-hover:text-sage-deep" />
+          {FESTIVAL_EXPERIENCES.map((item, idx) => {
+            const Icon = { Trophy, Utensils, Music }[item.icon];
+            return (
+              <ScrollReveal key={item.id} delay={200 * idx} className="h-full">
+                <div
+                  onClick={() => setSelectedExperience(item)}
+                  className="premium-card h-full p-8 hover:border-sage-border hover:shadow-lg group transition-all cursor-pointer"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center mb-6 group-hover:bg-sage-light transition-colors">
+                    <Icon className="w-6 h-6 text-slate-600 group-hover:text-sage-deep" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 mb-3">{item.title}</h3>
+                  <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
+                    {item.shortDesc}
+                  </p>
+                  <div className="flex items-center gap-2 text-xs font-black text-sage-deep opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0">
+                    <span>Learn more</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </div>
                 </div>
-                <h3 className="text-xl font-black text-slate-900 mb-3">{item.title}</h3>
-                <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
-                  {item.desc}
-                </p>
-                <div className="flex items-center gap-2 text-xs font-black text-sage-deep opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0">
-                  <span>Learn more</span>
-                  <ChevronRight className="w-3 h-3" />
-                </div>
-              </div>
-            </ScrollReveal>
-          ))}
+              </ScrollReveal>
+            );
+          })}
         </div>
       </section>
+
+      {/* Experience Detail Modal */}
+      <ExperienceDetailModal
+        experience={selectedExperience}
+        isOpen={!!selectedExperience}
+        onClose={() => setSelectedExperience(null)}
+      />
 
       {/* Official Footnote */}
       <section className="max-w-2xl mx-auto px-4">

@@ -54,6 +54,14 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, []);
 
+  const handleClaimPassClick = () => {
+    if (currentUser) {
+      navigateTo('pass');
+    } else {
+      setAuthModalOpen(true);
+    }
+  };
+
   const isAdmin = userRole === 'executive_admin';
   const isGatekeeper = userRole === 'gatekeeper' || userRole === 'gate_supervisor' || isAdmin;
 
@@ -77,7 +85,7 @@ function AppContent() {
 
         <main className="flex-1">
           {currentRoute === 'landing' && (
-            <LandingPage onClaimPass={() => setAuthModalOpen(true)} vipTier={vipTierHint} />
+            <LandingPage onClaimPass={handleClaimPassClick} vipTier={vipTierHint} />
           )}
 
           {currentRoute === 'pass' && (
@@ -85,15 +93,15 @@ function AppContent() {
           )}
 
           {currentRoute === 'gatekeeper' && (
-            isGatekeeper ? <GatekeeperScanner /> : <LandingPage onClaimPass={() => setAuthModalOpen(true)} vipTier={vipTierHint} />
+            <GatekeeperScanner />
           )}
 
           {currentRoute === 'admin' && (
-            isAdmin ? <AdminCommandConsole onNavigate={navigateTo} /> : <LandingPage onClaimPass={() => setAuthModalOpen(true)} vipTier={vipTierHint} />
+            <AdminCommandConsole onNavigate={navigateTo} />
           )}
 
           {currentRoute === 'diagnostics' && (
-            isAdmin ? <DiagnosticsConsole /> : <LandingPage onClaimPass={() => setAuthModalOpen(true)} vipTier={vipTierHint} />
+            <DiagnosticsConsole />
           )}
         </main>
 
@@ -134,7 +142,19 @@ function AppContent() {
         onClose={() => setAuthModalOpen(false)}
         vipTier={vipTierHint}
         invitationId={invitationId}
-        onSuccess={() => navigateTo('pass')}
+        onSuccess={(user) => {
+          // The user object is passed back from AuthModal after successful login/signup
+          const email = user?.email || '';
+          if (email === 'admin@gcc.com') {
+            navigateTo('admin');
+          } else if (email.startsWith('qrscanner')) {
+            navigateTo('gatekeeper');
+          } else {
+            // Regular users go to their pass
+            navigateTo('pass');
+          }
+          setAuthModalOpen(false);
+        }}
       />
     </div>
   );

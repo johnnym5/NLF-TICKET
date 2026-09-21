@@ -32,8 +32,8 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
     try {
       setLoading(true);
       setError('');
-      await signInWithGoogle(invitationId);
-      if (onSuccess) onSuccess();
+      const user = await signInWithGoogle(invitationId);
+      if (onSuccess) onSuccess(user);
       handleClose();
     } catch (err) {
       setError(err.message || 'Authentication interrupted.');
@@ -52,12 +52,13 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
 
     try {
       setLoading(true);
+      let user;
       if (isSignUp) {
-        await registerWithEmail(email.trim(), password, fullName.trim(), invitationId);
+        user = await registerWithEmail(email.trim(), password, fullName.trim(), invitationId);
       } else {
-        await loginWithEmail(email.trim(), password);
+        user = await loginWithEmail(email.trim(), password);
       }
-      if (onSuccess) onSuccess();
+      if (onSuccess) onSuccess(user);
       handleClose();
     } catch (err) {
       if (err.code === 'auth/email-already-in-use') {

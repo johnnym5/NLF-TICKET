@@ -182,7 +182,7 @@ export default function GatekeeperScanner() {
     }
   }, [isAuthenticated, isLocked]);
 
-  if (!isAuthenticated) return <StaffLogin title="Operational Terminal" allowedEmails={[]} onSuccess={() => {}} />;
+  if (!isAuthenticated) return <StaffLogin title="Operational Terminal" subtitle="Gate Verification Required" allowedEmails={['admin@gcc.com', 'qrscanner*@gcc.com']} onSuccess={() => setIsAuthenticated(true)} />;
   if (!hasPin) return <PinLock isSetting={true} onSetPin={handleSetPin} />;
   if (isLocked) return <PinLock onUnlock={() => setIsLocked(false)} />;
 

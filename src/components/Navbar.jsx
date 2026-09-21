@@ -22,6 +22,8 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
     if (item.public) return true;
     if (item.auth && currentUser) return true;
     if (item.role) return true;
+    // Always show if it's the current route (helps with landing on restricted pages)
+    if (currentRoute === item.id) return true;
     return false;
   });
 
@@ -79,7 +81,13 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
                 <Button variant="ghost" size="sm" icon={LogOut} onClick={logout} />
               </div>
             ) : (
-              <Button size="sm" onClick={onOpenAuth}>Claim Free Pass</Button>
+              <Button
+                size="sm"
+                onClick={onOpenAuth}
+                className="bg-slate-900 hover:bg-black text-white"
+              >
+                Sign In / Register
+              </Button>
             )}
 
             {/* Mobile Menu Toggle */}

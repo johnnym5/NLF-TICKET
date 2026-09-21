@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Clock, ArrowRight } from 'lucide-react';
 import ScrollReveal from './ScrollReveal';
 import Button from './ui/Button';
+import { useAuth } from '../context/AuthContext';
 
 export default function CountdownTimer({ onAction }) {
+  const { currentUser } = useAuth();
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export default function CountdownTimer({ onAction }) {
           <ScrollReveal delay={500}>
             <div className="flex flex-col items-center gap-6">
                <Button size="lg" className="w-full sm:w-auto px-12 py-5 text-lg" icon={ArrowRight} onClick={onAction}>
-                 Secure Attendance Pass
+                 {currentUser ? 'View My Digital Pass' : 'Secure Attendance Pass'}
                </Button>
                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Limited capacity official registry</p>
             </div>
