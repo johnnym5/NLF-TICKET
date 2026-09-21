@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@gcc.com';
+    }
+
+    function isGatekeeper() {
+      return request.auth != null && (
+        request.auth.token.email == 'admin@gcc.com' ||
+        request.auth.token.email.matches('qrscanner.*@gcc.com')
+      );
+    }
+
+    match /attendees/{userId} {
+      // User can read their own record, or staff can read all
+      allow read: if request.auth != null && (request.auth.uid == userId || isGatekeeper());
+
+      // User can create their own record
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // Staff can update check-in status, Admins can update anything
+      allow update: if isAdmin() || (isGatekeeper() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy']));
+    }
+  }
+}
