@@ -75,6 +75,9 @@ export default function GatekeeperScanner() {
       if (result.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
+      } else if (result.status === 'REVOKED') {
+        soundFX.playWarningBuzzer();
+        soundFX.triggerDuplicateHaptic();
       } else if (result.status === 'DUPLICATE') {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();

@@ -1,63 +1,68 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { TIER_WRISTBANDS, TIER_LABELS, useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
-import { 
-  Users, 
-  UserCheck, 
-  Clock, 
-  TrendingUp, 
-  Search, 
-  Filter, 
-  Lock, 
-  KeyRound, 
-  Link2, 
-  Copy, 
-  Check, 
-  Download, 
-  ShieldAlert,
-  ChevronRight,
-  RefreshCw,
-  Crown,
-  Calendar as CalendarIcon,
+import {
+  Users,
+  UserCheck,
+  TrendingUp,
+  Search,
   ChevronDown,
-  BarChart3,
-  MapPin,
-  Clock3,
-  Hash,
-  Activity
+  ChevronUp,
+  Activity,
+  Download,
+  Calendar as CalendarIcon,
+  RotateCcw,
+  RefreshCw,
+  UserX,
+  UserCheck2,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 
-const GATE_LOCATIONS = [
-  'Gate 1 - Main North Entrance',
-  'Gate 2 - VIP West Dignitary Gate',
-  'Gate 3 - East Grandstand Access',
-  'Gate 4 - Livestock Exhibition Ring',
-  'Admin Manual Override'
+const FESTIVAL_DAYS = [
+  { id: 'day1', label: 'Day 1', dateString: '2026-11-21', title: 'Grand Opening & Equestrian Durbar' },
+  { id: 'day2', label: 'Day 2', dateString: '2026-11-22', title: 'Livestock Showcase & Suya Fest' },
+  { id: 'day3', label: 'Day 3', dateString: '2026-11-23', title: 'Carnival Gala & Awards Finale' }
 ];
+
+export const ACCOUNT_TYPES = {
+  REGULAR: { label: 'General Admission', badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-300', wristband: 'Emerald Green' },
+  VIP_SILVER: { label: 'VIP Silver Hospitality', badgeBg: 'bg-slate-100 text-slate-700 border-slate-300', wristband: 'Metallic Silver Foil' },
+  VIP_GOLD: { label: 'VIP Gold Delegate', badgeBg: 'bg-amber-100 text-amber-900 border-amber-300', wristband: 'Champagne Gold Foil' },
+  VIP_PLATINUM: { label: 'Platinum Protocol', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700', wristband: 'Obsidian Platinum Badge' },
+  TEAM_MEMBER: { label: 'Official Team Member', badgeBg: 'bg-blue-100 text-blue-900 border-blue-300', wristband: 'Cobalt Blue Lanyard' },
+  VENDOR: { label: 'Certified Carnival Vendor', badgeBg: 'bg-orange-100 text-orange-900 border-orange-300', wristband: 'Tangerine Orange Badge' },
+  ASSOCIATE: { label: 'Partner Associate', badgeBg: 'bg-purple-100 text-purple-900 border-purple-300', wristband: 'Royal Purple Band' }
+};
 
 export default function AdminCommandConsole({ onNavigate }) {
   const { currentUser } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Live attendees state from Firestore
+  // Firestore raw state
   const [attendees, setAttendees] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Search and filter states
+  // Collapsible cards state (closed by default on mobile for sleek compression)
+  const [collapseVelocity, setCollapseVelocity] = useState(true);
+  const [collapseDirectory, setCollapseDirectory] = useState(false);
+
+  // Interactive Monthly Calendar Navigation
+  const [calendarYear, setCalendarYear] = useState(2026);
+  const [calendarMonth, setCalendarMonth] = useState(10); // 10 = November
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null); // 'YYYY-MM-DD'
+
+  // Filtering and search
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeFilter, setActiveFilter] = useState('ALL'); // 'ALL' | 'CHECKED_IN' | 'PENDING' | 'VIP'
-  const [selectedDate, setSelectedDate] = useState(null); // 'YYYY-MM-DD'
-  const [selectedWeek, setSelectedWeek] = useState(null); // 'YYYY-Wxx'
-  const [selectedGate, setSelectedGate] = useState('ALL');
+  const [roleFilter, setRoleFilter] = useState('ALL');
+  const [dayCheckFilter, setDayCheckFilter] = useState('ALL');
 
-  // VIP Link Generator State
-  const [selectedVipTier, setSelectedVipTier] = useState('gold');
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  // Validate Admin Email
   useEffect(() => {
     if (currentUser && currentUser.email === 'admin@gcc.com') {
       setIsAuthenticated(true);
@@ -66,193 +71,219 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   }, [currentUser]);
 
-  // Real-time Firestore onSnapshot subscription
   useEffect(() => {
     if (!isAuthenticated) return;
-
     setLoading(true);
     const attendeesRef = collection(db, 'attendees');
-
     const unsubscribe = onSnapshot(attendeesRef, (snapshot) => {
       const records = [];
-      snapshot.forEach((doc) => {
-        records.push({ id: doc.id, ...doc.data() });
+      snapshot.forEach((docSnap) => {
+        records.push({ id: docSnap.id, ...docSnap.data() });
       });
       setAttendees(records);
       setLoading(false);
     }, (err) => {
-      console.warn('Firestore snapshot error:', err);
-      setAttendees([]);
+      console.error('Admin snapshot error:', err);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, [isAuthenticated]);
 
-  // One-click Manual Check-In Override
-  const handleManualCheckIn = async (attendee) => {
-    if (!window.confirm(`Confirm manual entry override for ${attendee.fullName} (${attendee.ticketCode})?`)) {
-      return;
+  // Calendar metrics aggregation
+  const calendarMetrics = useMemo(() => {
+    const dailyRegistrations = {};
+    const dailyScans = { day1: 0, day2: 0, day3: 0 };
+    const dateSpecificScans = {};
+
+    attendees.forEach((a) => {
+      if (a.createdAt) {
+        const dateStr = a.createdAt.split('T')[0];
+        dailyRegistrations[dateStr] = (dailyRegistrations[dateStr] || 0) + 1;
+      }
+
+      const days = a.daysAttended || {};
+      if (days.day1 || a.status === 'CHECKED_IN') dailyScans.day1 += 1;
+      if (days.day2) dailyScans.day2 += 1;
+      if (days.day3) dailyScans.day3 += 1;
+
+      if (a.checkedInFullDate) {
+        const checkDate = a.checkedInFullDate.split('T')[0];
+        dateSpecificScans[checkDate] = (dateSpecificScans[checkDate] || 0) + 1;
+      }
+    });
+
+    return { dailyRegistrations, dailyScans, dateSpecificScans };
+  }, [attendees]);
+
+  // Overall KPIs
+  const kpis = useMemo(() => {
+    const total = attendees.length;
+    const present = attendees.filter(a => a.status === 'CHECKED_IN' || (a.daysAttended && Object.values(a.daysAttended).some(Boolean))).length;
+    const revokedCount = attendees.filter(a => a.accessRevoked === true).length;
+    const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+    return { total, present, revokedCount, rate };
+  }, [attendees]);
+
+  // Filtered Attendees list
+  const filteredAttendees = useMemo(() => {
+    return attendees.filter((a) => {
+      const query = searchTerm.toLowerCase().trim();
+      const matchesSearch =
+        !query ||
+        (a.fullName || '').toLowerCase().includes(query) ||
+        (a.email || '').toLowerCase().includes(query) ||
+        (a.ticketCode || '').toLowerCase().includes(query);
+
+      if (!matchesSearch) return false;
+
+      if (roleFilter !== 'ALL' && a.tier !== roleFilter) return false;
+
+      if (selectedCalendarDate) {
+        const regDate = a.createdAt ? a.createdAt.split('T')[0] : '';
+        const checkDate = a.checkedInFullDate ? a.checkedInFullDate.split('T')[0] : '';
+        if (regDate !== selectedCalendarDate && checkDate !== selectedCalendarDate) return false;
+      }
+
+      if (dayCheckFilter !== 'ALL') {
+        const hasDay = a.daysAttended?.[dayCheckFilter] || (dayCheckFilter === 'day1' && a.status === 'CHECKED_IN');
+        if (!hasDay) return false;
+      }
+
+      return true;
+    });
+  }, [attendees, searchTerm, roleFilter, selectedCalendarDate, dayCheckFilter]);
+
+  // 1. Upgrade Account Tier via Dropdown
+  const handleUpgradeAccountType = async (attendee, newTier) => {
+    try {
+      const attendeeRef = doc(db, 'attendees', attendee.id);
+      const tierConfig = ACCOUNT_TYPES[newTier] || ACCOUNT_TYPES.REGULAR;
+      await updateDoc(attendeeRef, {
+        tier: newTier,
+        wristbandColor: tierConfig.wristband
+      });
+    } catch (err) {
+      console.error('Failed to change user tier:', err);
     }
+  };
+
+  // 2. Revoke / Restore 24hr Access
+  const handleToggleAccessRevocation = async (attendee) => {
+    const willRevoke = !attendee.accessRevoked;
+    try {
+      const attendeeRef = doc(db, 'attendees', attendee.id);
+      await updateDoc(attendeeRef, {
+        accessRevoked: willRevoke,
+        revokedAt: willRevoke ? new Date().toISOString() : null,
+        status: willRevoke ? 'REVOKED' : 'REGISTERED'
+      });
+    } catch (err) {
+      console.error('Revocation update failed:', err);
+    }
+  };
+
+  // 3. Reset QR Code / Ticket Code
+  const handleResetQrCode = async (attendee) => {
+    const entropy = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const newCode = `GCC-2026-${entropy}`;
+    try {
+      const attendeeRef = doc(db, 'attendees', attendee.id);
+      await updateDoc(attendeeRef, {
+        ticketCode: newCode,
+        qrResetAt: new Date().toISOString(),
+        status: 'REGISTERED'
+      });
+    } catch (err) {
+      console.error('QR reset failed:', err);
+    }
+  };
+
+  // 4. Clear Multi-Day Attendance Marks
+  const handleClearMarkedDays = async (attendee) => {
+    try {
+      const attendeeRef = doc(db, 'attendees', attendee.id);
+      await updateDoc(attendeeRef, {
+        daysAttended: { day1: false, day2: false, day3: false },
+        status: 'REGISTERED',
+        checkedInAt: null,
+        checkedInFullDate: null,
+        checkedInBy: null
+      });
+    } catch (err) {
+      console.error('Clear attendance days failed:', err);
+    }
+  };
+
+  // 5. Toggle Specific Day Attendance Mark Manually
+  const handleToggleDayMark = async (attendee, dayKey) => {
+    const currentStatus = !!attendee.daysAttended?.[dayKey];
+    const newStatus = !currentStatus;
 
     try {
       const attendeeRef = doc(db, 'attendees', attendee.id);
-      await runTransaction(db, async (transaction) => {
-        const freshSnap = await transaction.get(attendeeRef);
-        if (!freshSnap.exists()) throw new Error('Attendee record does not exist');
+      const updatedDays = {
+        ...(attendee.daysAttended || { day1: false, day2: false, day3: false }),
+        [dayKey]: newStatus
+      };
 
-        const freshData = freshSnap.data();
-        if (freshData.status === 'CHECKED_IN') {
-          alert(`Warning: Already checked in at ${freshData.checkedInAt} by ${freshData.checkedInBy}`);
-          return;
-        }
-
-        const now = new Date();
-        const checkInTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const checkInFullDate = now.toISOString();
-
-        transaction.update(attendeeRef, {
-          status: 'CHECKED_IN',
-          checkedInAt: checkInTime,
-          checkedInFullDate: checkInFullDate,
-          checkedInBy: 'Admin Manual Override'
-        });
+      await updateDoc(attendeeRef, {
+        daysAttended: updatedDays,
+        status: Object.values(updatedDays).some(Boolean) ? 'CHECKED_IN' : 'REGISTERED',
+        checkedInAt: newStatus ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : attendee.checkedInAt,
+        checkedInFullDate: newStatus ? new Date().toISOString() : attendee.checkedInFullDate
       });
     } catch (err) {
-      console.error('Manual check-in failed:', err);
-      alert('Manual check-in override failed. Please verify your connection.');
+      console.error('Toggle day mark failed:', err);
     }
   };
 
-  // Helper: Get ISO Week number
-  const getWeekNumber = (date) => {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
-  };
+  // Calendar Days Matrix
+  const daysInMonth = useMemo(() => {
+    const date = new Date(calendarYear, calendarMonth, 1);
+    const days = [];
+    const firstDayIndex = date.getDay();
+    const totalDays = new Date(calendarYear, calendarMonth + 1, 0).getDate();
 
-  // Analytics Computation
-  const analytics = useMemo(() => {
-    const dailyRegistrations = {};
-    const weeklyRegistrations = {};
-    const dailyAttendance = {};
-    const weeklyAttendance = {};
-    const gateStats = {};
+    for (let i = 0; i < firstDayIndex; i++) {
+      days.push({ dayNumber: null, dateString: null });
+    }
 
-    attendees.forEach(a => {
-      // Registration Analytics
-      if (a.createdAt) {
-        const regDate = a.createdAt.split('T')[0];
-        dailyRegistrations[regDate] = (dailyRegistrations[regDate] || 0) + 1;
+    for (let d = 1; d <= totalDays; d++) {
+      const monthPadded = String(calendarMonth + 1).padStart(2, '0');
+      const dayPadded = String(d).padStart(2, '0');
+      const dateString = `${calendarYear}-${monthPadded}-${dayPadded}`;
+      days.push({ dayNumber: d, dateString });
+    }
 
-        const regWeek = getWeekNumber(new Date(a.createdAt));
-        weeklyRegistrations[regWeek] = (weeklyRegistrations[regWeek] || 0) + 1;
-      }
+    return days;
+  }, [calendarYear, calendarMonth]);
 
-      // Attendance Analytics
-      if (a.status === 'CHECKED_IN' && a.checkedInFullDate) {
-        const attDate = a.checkedInFullDate.split('T')[0];
-        dailyAttendance[attDate] = (dailyAttendance[attDate] || 0) + 1;
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
 
-        const attWeek = getWeekNumber(new Date(a.checkedInFullDate));
-        weeklyAttendance[attWeek] = (weeklyAttendance[attWeek] || 0) + 1;
-
-        if (a.checkedInBy) {
-          gateStats[a.checkedInBy] = (gateStats[a.checkedInBy] || 0) + 1;
-        }
-      }
-    });
-
-    return {
-      dailyRegistrations,
-      weeklyRegistrations,
-      dailyAttendance,
-      weeklyAttendance,
-      gateStats
-    };
-  }, [attendees]);
-
-  // Filter and search logic
-  const baseFilteredAttendees = useMemo(() => {
-    return attendees.filter(attendee => {
-      // 1. Search filter
-      const matchesSearch =
-        (attendee.fullName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (attendee.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (attendee.ticketCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (attendee.tier || '').toLowerCase().includes(searchTerm.toLowerCase());
-      if (!matchesSearch) return false;
-
-      // 2. Date filter
-      if (selectedDate) {
-        const regDate = attendee.createdAt?.split('T')[0];
-        const attDate = attendee.checkedInFullDate?.split('T')[0];
-        if (regDate !== selectedDate && attDate !== selectedDate) return false;
-      }
-
-      // 3. Week filter
-      if (selectedWeek) {
-        const regWeek = attendee.createdAt ? getWeekNumber(new Date(attendee.createdAt)) : null;
-        const attWeek = attendee.checkedInFullDate ? getWeekNumber(new Date(attendee.checkedInFullDate)) : null;
-        if (regWeek !== selectedWeek && attWeek !== selectedWeek) return false;
-      }
-
-      // 4. Gate filter
-      if (selectedGate !== 'ALL' && attendee.checkedInBy !== selectedGate) return false;
-
-      return true;
-    });
-  }, [attendees, searchTerm, selectedDate, selectedWeek, selectedGate]);
-
-  // Tab-specific Filtered Set (for the list)
-  const filteredAttendees = useMemo(() => {
-    return baseFilteredAttendees.filter(attendee => {
-      if (activeFilter === 'CHECKED_IN') return attendee.status === 'CHECKED_IN';
-      if (activeFilter === 'PENDING') return attendee.status === 'REGISTERED';
-      if (activeFilter === 'VIP') return (attendee.tier || '').startsWith('VIP');
-      return true;
-    });
-  }, [baseFilteredAttendees, activeFilter]);
-
-  // Derived Metrics (derived from base scope)
-  const stats = useMemo(() => {
-    const total = baseFilteredAttendees.length;
-    const present = baseFilteredAttendees.filter(a => a.status === 'CHECKED_IN').length;
-    const pending = baseFilteredAttendees.filter(a => a.status !== 'CHECKED_IN').length;
-    const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-    return { total, present, pending, rate };
-  }, [baseFilteredAttendees]);
-
-  // VIP Link Generator
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://nlf2026.carnival.ng';
-  const generatedVipUrl = `${baseUrl}/ticket?vip=${selectedVipTier}`;
-
-  const handleCopyVipLink = async () => {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(generatedVipUrl);
-      } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = generatedVipUrl;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-    } catch (e) {
-      console.warn('Clipboard failed:', e);
+  const handlePrevMonth = () => {
+    if (calendarMonth === 0) {
+      setCalendarMonth(11);
+      setCalendarYear(y => y - 1);
+    } else {
+      setCalendarMonth(m => m - 1);
     }
   };
 
-  // Export CSV helper
+  const handleNextMonth = () => {
+    if (calendarMonth === 11) {
+      setCalendarMonth(0);
+      setCalendarYear(y => y + 1);
+    } else {
+      setCalendarMonth(m => m + 1);
+    }
+  };
+
   const handleExportCsv = () => {
     if (attendees.length === 0) return;
-    const headers = ['Full Name', 'Email', 'Ticket Code', 'Tier', 'Assigned Wristband', 'Status', 'Checked In At', 'Checked In By', 'Referral Source', 'Created At'];
+    const headers = ['Full Name', 'Email', 'Ticket Code', 'Account Type', 'Wristband', 'Status', 'Access Revoked', 'Day 1', 'Day 2', 'Day 3', 'Created At'];
     const rows = attendees.map(a => [
       `"${a.fullName || ''}"`,
       `"${a.email || ''}"`,
@@ -260,604 +291,479 @@ export default function AdminCommandConsole({ onNavigate }) {
       `"${a.tier || 'REGULAR'}"`,
       `"${a.wristbandColor || ''}"`,
       `"${a.status || 'REGISTERED'}"`,
-      `"${a.checkedInAt || ''}"`,
-      `"${a.checkedInBy || ''}"`,
-      `"${a.referralSource || ''}"`,
+      `"${a.accessRevoked ? 'REVOKED' : 'ACTIVE'}"`,
+      `"${a.daysAttended?.day1 || a.status === 'CHECKED_IN' ? 'YES' : 'NO'}"`,
+      `"${a.daysAttended?.day2 ? 'YES' : 'NO'}"`,
+      `"${a.daysAttended?.day3 ? 'YES' : 'NO'}"`,
       `"${a.createdAt || ''}"`
     ]);
-
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `NLF_2026_Attendees_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('download', `Carnival_Attendance_Master_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // 1. Authentication Barrier
   if (!isAuthenticated) {
     return (
       <StaffLogin
-        title="Executive Command Hub"
-        subtitle="Steering Committee, Federal Government & GCC Leadership Access."
+        title="Executive Attendance Command Hub"
+        subtitle="Restricted Steering Committee Access"
         allowedEmails={['admin@gcc.com']}
         onSuccess={() => setIsAuthenticated(true)}
       />
     );
   }
 
-  // 2. Executive Command Hub
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-8">
-      {/* Top Banner with Real-time indicator & CSV download */}
-      <ScrollReveal delay={100} duration={850}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 font-sans tracking-tight">
-                Executive Attendance Command Hub
-              </h1>
-            </div>
-          </div>
-
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-6">
+      {/* Top Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-3xl border-2 border-slate-200/90 shadow-sm">
+        <div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => onNavigate?.('diagnostics')}
-              className="px-4 py-2 rounded-xl bg-white/90 hover:bg-slate-50 backdrop-blur-md border-2 border-slate-300 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-sm hover:shadow-md transition-all active:translate-y-0.5"
-            >
-              <Activity className="w-3.5 h-3.5 text-sage-deep" />
-              <span>System Diagnostics</span>
-            </button>
-            <button
-              onClick={handleExportCsv}
-              className="px-4 py-2 rounded-xl bg-white/90 hover:bg-white backdrop-blur-md border-2 border-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1.5 shadow-sm hover:shadow-md transition-all active:translate-y-0.5"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV Report</span>
-            </button>
+            <h1 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight">
+              Executive Attendance Command Hub
+            </h1>
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full font-extrabold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+              Live Real-Time
+            </span>
           </div>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
+            Abuja 2026 Carnival Access Control, Multi-Day Ticketing & Role Administration
+          </p>
         </div>
-      </ScrollReveal>
 
-      {/* 4 Metric Cards - Staggered independent reveal */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-        {/* Metric 1: Total Registrations */}
-        <ScrollReveal delay={150} direction="up" duration={850} className="h-full">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setActiveFilter('ALL')}
-            className={`w-full text-left h-full bg-white/85 backdrop-blur-xl rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 border-2 shadow-[0_12px_28px_-6px_rgba(15,23,42,0.12),inset_0_1.5px_0_rgba(255,255,255,1)] transition-all active:scale-[0.98] ${
-              activeFilter === 'ALL' ? 'border-sage-deep ring-2 ring-sage-base/30' : 'border-slate-300/90 hover:border-sage-base hover:-translate-y-0.5'
-            }`}
+            onClick={() => onNavigate?.('diagnostics')}
+            className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border-2 border-slate-300 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all active:translate-y-0.5"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] sm:text-xs font-bold text-slate-500">Registrations</span>
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-canvas-inset border border-slate-200 text-slate-700 flex items-center justify-center shadow-xs">
-                <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-            </div>
-            <p className="text-xl sm:text-3xl font-black text-slate-900 mt-1.5">
-              {stats.total}
-            </p>
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-slate-400 font-semibold truncate">
-              {activeFilter === 'ALL' && !selectedDate && !selectedWeek ? '100% baseline' : 'Filtered Subset'}
-            </div>
+            <Activity className="w-3.5 h-3.5 text-sage-deep" />
+            <span className="hidden sm:inline">System Diagnostics</span>
           </button>
-        </ScrollReveal>
-
-        {/* Metric 2: Present at Venue (Checked-In) */}
-        <ScrollReveal delay={300} direction="up" duration={850} className="h-full">
           <button
-            onClick={() => setActiveFilter('CHECKED_IN')}
-            className={`w-full text-left h-full backdrop-blur-xl rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 border-2 shadow-[0_12px_28px_-6px_rgba(22,101,52,0.15),inset_0_1.5px_0_rgba(255,255,255,1)] transition-all active:scale-[0.98] ${
-              activeFilter === 'CHECKED_IN'
-                ? 'bg-emerald-100/90 border-emerald-600 ring-2 ring-emerald-400/30'
-                : 'bg-emerald-50/85 border-emerald-400/90 hover:border-emerald-600 hover:-translate-y-0.5'
-            }`}
+            onClick={handleExportCsv}
+            className="px-3.5 py-2 rounded-xl bg-sage-deep hover:bg-emerald-950 text-white text-xs font-black flex items-center gap-1.5 border-2 border-emerald-950/40 shadow-sm transition-all active:translate-y-0.5"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] sm:text-xs font-bold text-emerald-800">Present</span>
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-status-successBg border border-emerald-300 text-status-successText flex items-center justify-center shadow-xs">
-                <UserCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-            </div>
-            <p className="text-xl sm:text-3xl font-black text-status-successText mt-1.5">
-              {stats.present}
-            </p>
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-emerald-700 font-bold truncate">
-              Wristbands issued
-            </div>
+            <Download className="w-3.5 h-3.5" />
+            <span>Export CSV</span>
           </button>
-        </ScrollReveal>
-
-        {/* Metric 3: Yet to Arrive */}
-        <ScrollReveal delay={450} direction="up" duration={850} className="h-full">
-          <button
-            onClick={() => setActiveFilter('PENDING')}
-            className={`w-full text-left h-full backdrop-blur-xl rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 border-2 shadow-[0_12px_28px_-6px_rgba(180,83,9,0.12),inset_0_1.5px_0_rgba(255,255,255,1)] transition-all active:scale-[0.98] ${
-              activeFilter === 'PENDING'
-                ? 'bg-amber-100/90 border-amber-600 ring-2 ring-amber-400/30'
-                : 'bg-amber-50/85 border-amber-300/90 hover:border-amber-600 hover:-translate-y-0.5'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] sm:text-xs font-bold text-amber-800">Pending</span>
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-status-pendingBg border border-amber-300 text-status-pendingText flex items-center justify-center shadow-xs">
-                <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-            </div>
-            <p className="text-xl sm:text-3xl font-black text-status-pendingText mt-1.5">
-              {stats.pending}
-            </p>
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-amber-700 font-bold truncate">
-              Unscanned passes
-            </div>
-          </button>
-        </ScrollReveal>
-
-        {/* Metric 4: Live Turnout Rate */}
-        <ScrollReveal delay={600} direction="up" duration={850} className="h-full">
-          <div className="h-full bg-white/85 backdrop-blur-xl rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 border-2 border-slate-300/90 shadow-[0_12px_28px_-6px_rgba(15,23,42,0.12),inset_0_1.5px_0_rgba(255,255,255,1)] transition-all">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] sm:text-xs font-bold text-slate-500">Turnout Rate</span>
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-sage-base border border-sage-border text-sage-deep flex items-center justify-center shadow-xs">
-                <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-            </div>
-            <p className="text-xl sm:text-3xl font-black text-slate-900 mt-1.5">
-              {stats.rate}%
-            </p>
-            {/* Sleek Progress Bar */}
-            <div className="w-full h-1.5 sm:h-2 bg-canvas-inset border border-slate-200 rounded-full mt-2 sm:mt-3 overflow-hidden">
-              <div 
-                className="h-full bg-sage-deep rounded-full transition-all duration-700"
-                style={{ width: `${Math.min(stats.rate, 100)}%` }}
-              />
-            </div>
-          </div>
-        </ScrollReveal>
+        </div>
       </div>
 
-      {/* Advanced Telemetry & Analytics Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Registration Velocity (Daily/Weekly) */}
-        <ScrollReveal delay={200} direction="up" className="lg:col-span-2">
-          <div className="bg-white/85 backdrop-blur-xl rounded-3xl border-2 border-slate-300/90 p-5 sm:p-6 shadow-card h-full">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-2">
-                <Activity className="w-5 h-5 text-sage-deep" />
-                <h3 className="text-sm font-black text-slate-900">Registration & Attendance Velocity</h3>
-              </div>
-              <div className="flex items-center gap-1.5 p-1 bg-canvas-inset rounded-xl border border-slate-200">
-                <button
-                  onClick={() => { setSelectedWeek(null); setSelectedDate(null); }}
-                  className="px-2.5 py-1 text-[10px] font-bold rounded-lg hover:bg-white transition-all text-slate-600"
-                >
-                  Reset Filters
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Daily Stats */}
-              <div>
-                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <CalendarIcon className="w-3.5 h-3.5" />
-                  Daily Breakdown
-                </h4>
-                <div className="space-y-2 max-h-[240px] overflow-y-auto pr-2 custom-scrollbar">
-                  {Object.entries(analytics.dailyRegistrations).sort().reverse().map(([date, count]) => (
-                    <button
-                      key={date}
-                      onClick={() => setSelectedDate(selectedDate === date ? null : date)}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border-2 transition-all ${
-                        selectedDate === date
-                          ? 'bg-sage-base border-sage-deep text-sage-deep shadow-sm'
-                          : 'bg-canvas-inset border-transparent hover:border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      <div className="flex flex-col items-start">
-                        <span className="text-xs font-bold">{new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                        <span className="text-[10px] opacity-70">Turnout: {analytics.dailyAttendance[date] || 0} attendees</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black">{count}</span>
-                        <ChevronRight className="w-3 h-3 opacity-40" />
-                      </div>
-                    </button>
-                  ))}
-                  {Object.keys(analytics.dailyRegistrations).length === 0 && (
-                    <div className="text-center py-6 text-slate-400 text-xs italic">No registration data available</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Weekly Stats */}
-              <div>
-                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <BarChart3 className="w-3.5 h-3.5" />
-                  Weekly Trends
-                </h4>
-                <div className="space-y-2 max-h-[240px] overflow-y-auto pr-2 custom-scrollbar">
-                  {Object.entries(analytics.weeklyRegistrations).sort().reverse().map(([week, count]) => (
-                    <button
-                      key={week}
-                      onClick={() => setSelectedWeek(selectedWeek === week ? null : week)}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border-2 transition-all ${
-                        selectedWeek === week
-                          ? 'bg-amber-100 border-amber-500 text-amber-900 shadow-sm'
-                          : 'bg-canvas-inset border-transparent hover:border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      <div className="flex flex-col items-start">
-                        <span className="text-xs font-bold">Week {week.split('-W')[1]} ({week.split('-')[0]})</span>
-                        <span className="text-[10px] opacity-70">Entries: {analytics.weeklyAttendance[week] || 0}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black">{count}</span>
-                        <ChevronRight className="w-3 h-3 opacity-40" />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+        <div className="bg-white/85 backdrop-blur-md rounded-2xl sm:rounded-3xl p-4 border-2 border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-bold">
+            <span>Registrations</span>
+            <Users className="w-4 h-4 text-slate-400" />
           </div>
-        </ScrollReveal>
+          <p className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">{kpis.total}</p>
+          <p className="text-[10px] text-slate-400 font-semibold mt-1">100% database baseline</p>
+        </div>
 
-        {/* Gate Performance Telemetry */}
-        <ScrollReveal delay={350} direction="up">
-          <div className="bg-white/85 backdrop-blur-xl rounded-3xl border-2 border-slate-300/90 p-5 sm:p-6 shadow-card h-full">
-            <div className="flex items-center gap-2 mb-6">
-              <MapPin className="w-5 h-5 text-rose-600" />
-              <h3 className="text-sm font-black text-slate-900">Gate Telemetry</h3>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900 text-white shadow-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-                    <UserCheck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Check-ins</p>
-                    <p className="text-lg font-black">{stats.present}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Live Rate</p>
-                  <p className="text-lg font-black text-emerald-400">{stats.rate}%</p>
-                </div>
-              </div>
-
-              <div className="space-y-2 mt-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Gate Breakdown</h4>
-                  <button
-                    onClick={() => setSelectedGate('ALL')}
-                    className="text-[10px] font-bold text-sage-deep hover:underline"
-                  >
-                    View All
-                  </button>
-                </div>
-                {GATE_LOCATIONS.map((gate) => {
-                  const count = analytics.gateStats[gate] || 0;
-                  const percentage = stats.present > 0 ? Math.round((count / stats.present) * 100) : 0;
-
-                  return (
-                    <button
-                      key={gate}
-                      onClick={() => setSelectedGate(selectedGate === gate ? 'ALL' : gate)}
-                      className={`w-full text-left p-3 rounded-2xl border-2 transition-all ${
-                        selectedGate === gate
-                          ? 'border-rose-500 bg-rose-50 shadow-sm'
-                          : 'border-slate-100 bg-white hover:border-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] font-bold text-slate-800 truncate pr-2">{gate}</span>
-                        <span className="text-[11px] font-black text-slate-900">{count}</span>
-                      </div>
-                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex">
-                        <div
-                          className={`h-full transition-all duration-700 ${gate === 'Admin Manual Override' ? 'bg-amber-400' : 'bg-rose-500'}`}
-                          style={{ width: `${percentage}%` }}
-                        />
-                      </div>
-                      <p className="text-[9px] font-bold text-slate-400 mt-1">{percentage}% of total venue traffic</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+        <div className="bg-emerald-50/80 backdrop-blur-md rounded-2xl sm:rounded-3xl p-4 border-2 border-emerald-300 shadow-sm">
+          <div className="flex items-center justify-between text-emerald-800 text-xs font-bold">
+            <span>Present at Venue</span>
+            <UserCheck className="w-4 h-4 text-emerald-600" />
           </div>
-        </ScrollReveal>
+          <p className="text-2xl sm:text-3xl font-black text-emerald-700 mt-2">{kpis.present}</p>
+          <p className="text-[10px] text-emerald-700 font-semibold mt-1">Checked in at least 1 day</p>
+        </div>
+
+        <div className="bg-rose-50/80 backdrop-blur-md rounded-2xl sm:rounded-3xl p-4 border-2 border-rose-300 shadow-sm">
+          <div className="flex items-center justify-between text-rose-800 text-xs font-bold">
+            <span>Access Revoked</span>
+            <UserX className="w-4 h-4 text-rose-600" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-rose-700 mt-2">{kpis.revokedCount}</p>
+          <p className="text-[10px] text-rose-600 font-semibold mt-1">Blocked from gate re-entry</p>
+        </div>
+
+        <div className="bg-white/85 backdrop-blur-md rounded-2xl sm:rounded-3xl p-4 border-2 border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-bold">
+            <span>Live Turnout</span>
+            <TrendingUp className="w-4 h-4 text-sage-deep" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">{kpis.rate}%</p>
+          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
+            <div className="bg-sage-deep h-1.5 rounded-full transition-all duration-500" style={{ width: `${kpis.rate}%` }} />
+          </div>
+        </div>
       </div>
 
-      {/* VIP Targeted Link Dispatcher - Independent reveal */}
-      <ScrollReveal delay={350} direction="up" duration={900}>
-        <div className="bg-white/85 backdrop-blur-xl rounded-3xl border-2 border-champagne-border/90 p-5 sm:p-6 shadow-[0_16px_36px_-6px_rgba(15,23,42,0.12),inset_0_1.5px_0_rgba(255,255,255,1)] bg-gradient-to-r from-white/90 via-champagne-light/40 to-white/90">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <Crown className="w-5 h-5 text-champagne-text" />
-                <h3 className="text-sm font-black text-slate-900">
-                  VIP Invitation Link Generator
-                </h3>
-              </div>
-              <p className="text-xs text-slate-600 mt-0.5 font-medium">
-                Dispatch tier-specific invitation URLs to sovereign dignitaries, government partners, and royal sponsors.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center rounded-xl bg-white/90 p-1 border-2 border-slate-300 shadow-xs">
-                <button
-                  onClick={() => setSelectedVipTier('silver')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                    selectedVipTier === 'silver' ? 'bg-white shadow-xs text-slate-800' : 'text-slate-500'
-                  }`}
-                >
-                  Silver VIP
-                </button>
-                <button
-                  onClick={() => setSelectedVipTier('gold')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                    selectedVipTier === 'gold' ? 'bg-champagne-base shadow-xs text-champagne-text' : 'text-slate-500'
-                  }`}
-                >
-                  Gold VIP
-                </button>
-                <button
-                  onClick={() => setSelectedVipTier('platinum')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                    selectedVipTier === 'platinum' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-500'
-                  }`}
-                >
-                  Platinum VIP
-                </button>
-              </div>
-
-              <button
-                onClick={handleCopyVipLink}
-                className="px-4 py-2 rounded-xl bg-sage-deep hover:bg-emerald-950 text-white font-black text-xs flex items-center gap-1.5 border-2 border-emerald-950/40 shadow-3d-btn transition-all active:translate-y-0.5"
-              >
-                {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedLink ? 'VIP Link Copied!' : 'Copy VIP Link'}</span>
-              </button>
-            </div>
+      {/* 3-Day Turnout Bar Tracker */}
+      <div className="bg-white/85 backdrop-blur-xl rounded-2xl sm:rounded-3xl border-2 border-slate-200 p-4 sm:p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <CalendarIcon className="w-4 h-4 text-sage-deep" />
+            <h3 className="text-xs sm:text-sm font-black text-slate-900 uppercase tracking-wider">
+              3-Day Festival Turnout Tracker (Old Parade Ground)
+            </h3>
           </div>
-
-          <div className="mt-3 p-2.5 rounded-xl bg-white/70 backdrop-blur-md border-2 border-slate-300 text-xs font-mono text-slate-700 truncate shadow-inner">
-            {generatedVipUrl}
-          </div>
-        </div>
-      </ScrollReveal>
-
-      {/* Searchable Directory Section - Independent reveal */}
-      <ScrollReveal delay={500} direction="up" duration={950}>
-        <div className="bg-white/85 backdrop-blur-2xl rounded-3xl border-2 border-slate-300/90 shadow-[0_20px_45px_-8px_rgba(15,23,42,0.16),inset_0_2px_0_rgba(255,255,255,1)] overflow-hidden">
-        {/* Controls Toolbar: Search + Filter Tabs */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
-            {/* Search Box */}
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search by name, email, or code..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3.5 py-2 rounded-xl border border-slate-200 text-xs bg-canvas-inset focus:bg-white focus:outline-none focus:ring-2 focus:ring-sage-base"
-              />
-            </div>
-
-            {/* Active Date/Week Badge */}
-            {(selectedDate || selectedWeek || selectedGate !== 'ALL') && (
-              <div className="flex items-center gap-2">
-                {selectedDate && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sage-base text-sage-deep text-[10px] font-bold border border-sage-border shadow-xs">
-                    <CalendarIcon className="w-3 h-3" />
-                    {selectedDate}
-                    <button onClick={() => setSelectedDate(null)} className="ml-1 hover:text-rose-600">×</button>
-                  </span>
-                )}
-                {selectedWeek && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 text-[10px] font-bold border border-amber-300 shadow-xs">
-                    <BarChart3 className="w-3 h-3" />
-                    Week {selectedWeek.split('-W')[1]}
-                    <button onClick={() => setSelectedWeek(null)} className="ml-1 hover:text-rose-600">×</button>
-                  </span>
-                )}
-                {selectedGate !== 'ALL' && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-900 text-[10px] font-bold border border-rose-300 shadow-xs">
-                    <MapPin className="w-3 h-3" />
-                    {selectedGate.split(' - ')[0]}
-                    <button onClick={() => setSelectedGate('ALL')} className="ml-1 hover:text-rose-600">×</button>
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Filter Tabs */}
-          <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-            {[
-              { id: 'ALL', label: `All (${stats.total})` },
-              { id: 'CHECKED_IN', label: `Checked In (${stats.present})` },
-              { id: 'PENDING', label: `Pending (${stats.pending})` },
-              { id: 'VIP', label: 'VIPs Only' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveFilter(tab.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  activeFilter === tab.id
-                    ? 'bg-sage-base text-sage-deep shadow-xs'
-                    : 'bg-canvas-inset text-slate-600 hover:bg-slate-200/60'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Mobile Stacked Cards — visible only on small screens */}
-        <div className="md:hidden divide-y divide-slate-100">
-          {filteredAttendees.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              No attendees match the filter criteria.
-            </div>
-          ) : (
-            filteredAttendees.map((attendee) => {
-              const isChecked = attendee.status === 'CHECKED_IN';
-              const wristband = attendee.wristbandColor || TIER_WRISTBANDS[attendee.tier] || 'Emerald Green';
-
-              return (
-                <div key={attendee.id} className="p-4 space-y-2.5">
-                  {/* Row 1: Name + Status badge */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-900 truncate">{attendee.fullName}</p>
-                      <p className="text-[11px] text-slate-400 truncate">{attendee.email}</p>
-                    </div>
-                    {isChecked ? (
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-successBg text-status-successText font-bold text-[10px]">
-                        <Check className="w-3 h-3" />
-                        <span>Checked In</span>
-                      </span>
-                    ) : (
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-pendingBg text-status-pendingText font-bold text-[10px]">
-                        Pending
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Row 2: Ticket code + Tier/Wristband */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-canvas-inset border border-slate-200 text-slate-800">
-                      {attendee.ticketCode}
-                    </span>
-                    <div className="text-right">
-                      <p className="text-[11px] font-semibold text-slate-700">{attendee.tier}</p>
-                      <p className="text-[10px] text-slate-500">{wristband}</p>
-                    </div>
-                  </div>
-
-                  {/* Row 3: Check-in details or action button */}
-                  {isChecked ? (
-                    attendee.checkedInAt && (
-                      <p className="text-[10px] text-slate-400">
-                        {attendee.checkedInAt} — {attendee.checkedInBy || 'Gate'}
-                      </p>
-                    )
-                  ) : (
-                    <button
-                      onClick={() => handleManualCheckIn(attendee)}
-                      className="w-full min-h-[44px] py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200 transition-colors active:scale-[0.98]"
-                    >
-                      Manual Check-In
-                    </button>
-                  )}
-                </div>
-              );
-            })
+          {dayCheckFilter !== 'ALL' && (
+            <button
+              onClick={() => setDayCheckFilter('ALL')}
+              className="text-[10px] text-rose-600 font-bold hover:underline"
+            >
+              Clear Filter
+            </button>
           )}
         </div>
 
-        {/* Desktop Directory Table — hidden on small screens */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-canvas-inset/60 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100">
-                <th className="py-3 px-6">Attendee & Email</th>
-                <th className="py-3 px-4">Ticket Code</th>
-                <th className="py-3 px-4">Tier & Wristband</th>
-                <th className="py-3 px-4">Status & Time</th>
-                <th className="py-3 px-6 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {FESTIVAL_DAYS.map((fest) => {
+            const count = calendarMetrics.dailyScans[fest.id] || 0;
+            const percentage = kpis.total > 0 ? Math.round((count / kpis.total) * 100) : 0;
+            const isSelected = dayCheckFilter === fest.id;
+
+            return (
+              <button
+                key={fest.id}
+                onClick={() => setDayCheckFilter(isSelected ? 'ALL' : fest.id)}
+                className={`text-left p-3.5 rounded-2xl border-2 transition-all ${
+                  isSelected ? 'border-sage-deep bg-sage-light/80 shadow-sm' : 'border-slate-200 bg-white/70 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-900">{fest.label} ({fest.dateString})</span>
+                  <span className="text-xs font-mono font-black text-sage-deep">{count} Scans</span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-medium truncate mt-0.5">{fest.title}</p>
+                <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-sage-deep h-1.5 rounded-full" style={{ width: `${Math.min(percentage, 100)}%` }} />
+                </div>
+                <p className="text-[9px] text-slate-400 font-bold mt-1">{percentage}% of total registered</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Interactive Monthly Calendar (Collapsible Accordion) */}
+      <div className="bg-white/85 backdrop-blur-xl rounded-2xl sm:rounded-3xl border-2 border-slate-200 shadow-sm overflow-hidden">
+        <div
+          onClick={() => setCollapseVelocity(!collapseVelocity)}
+          className="p-4 sm:p-5 flex items-center justify-between cursor-pointer select-none bg-slate-50/50 hover:bg-slate-100/50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <CalendarIcon className="w-4 h-4 text-sage-deep" />
+            <div>
+              <h2 className="text-xs sm:text-sm font-black text-slate-900">
+                Monthly Registration & Gate Scan Calendar
+              </h2>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Click any calendar day to audit daily intake registrations and physical scans
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedCalendarDate && (
+              <span className="px-2 py-0.5 rounded-full bg-sage-base text-sage-deep font-bold text-[10px] border border-sage-border">
+                Filter: {selectedCalendarDate}
+              </span>
+            )}
+            {collapseVelocity ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-slate-400" />}
+          </div>
+        </div>
+
+        {!collapseVelocity && (
+          <div className="p-4 sm:p-6 border-t border-slate-100 space-y-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrevMonth}
+                  className="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <h4 className="text-xs sm:text-sm font-black text-slate-900">
+                  {monthNames[calendarMonth]} {calendarYear}
+                </h4>
+                <button
+                  onClick={handleNextMonth}
+                  className="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              {selectedCalendarDate && (
+                <button
+                  onClick={() => setSelectedCalendarDate(null)}
+                  className="text-[11px] font-bold text-rose-600 hover:underline"
+                >
+                  Clear Selected Date
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-7 text-center text-[10px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-wider py-1 border-b border-slate-100">
+              <div>Sun</div>
+              <div>Mon</div>
+              <div>Tue</div>
+              <div>Wed</div>
+              <div>Thu</div>
+              <div>Fri</div>
+              <div>Sat</div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
+              {daysInMonth.map((item, index) => {
+                if (!item.dayNumber) {
+                  return <div key={`pad-${index}`} className="h-14 sm:h-20 bg-slate-50/40 rounded-xl" />;
+                }
+
+                const regCount = calendarMetrics.dailyRegistrations[item.dateString] || 0;
+                const scanCount = calendarMetrics.dateSpecificScans[item.dateString] || 0;
+                const isFestivalDay = FESTIVAL_DAYS.some(f => f.dateString === item.dateString);
+                const isSelected = selectedCalendarDate === item.dateString;
+
+                return (
+                  <button
+                    key={item.dateString}
+                    onClick={() => setSelectedCalendarDate(isSelected ? null : item.dateString)}
+                    className={`h-14 sm:h-20 p-1 sm:p-2 rounded-xl border-2 flex flex-col justify-between text-left transition-all relative ${
+                      isSelected
+                        ? 'border-sage-deep bg-sage-light/90 shadow-md ring-2 ring-sage-base/40'
+                        : isFestivalDay
+                        ? 'border-amber-400 bg-amber-50/60 hover:border-amber-500'
+                        : 'border-slate-100 bg-white/70 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className={`text-[10px] sm:text-xs font-black ${isFestivalDay ? 'text-amber-800' : 'text-slate-800'}`}>
+                        {item.dayNumber}
+                      </span>
+                      {isFestivalDay && (
+                        <span className="hidden sm:inline text-[9px] px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 font-bold">
+                          Carnival
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-0.5">
+                      {regCount > 0 && (
+                        <div className="text-[9px] sm:text-[10px] font-bold text-slate-600 truncate">
+                          <span className="font-extrabold text-slate-900">+{regCount}</span> reg
+                        </div>
+                      )}
+                      {scanCount > 0 && (
+                        <div className="text-[9px] sm:text-[10px] font-bold text-emerald-700 truncate">
+                          <span className="font-extrabold">{scanCount}</span> scans
+                        </div>
+                      )}
+                      {regCount === 0 && scanCount === 0 && (
+                        <span className="text-[9px] text-slate-300">-</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Attendee Directory (Compressed with Role Dropdown, Tick Marks & Security Actions) */}
+      <div className="bg-white/85 backdrop-blur-xl rounded-2xl sm:rounded-3xl border-2 border-slate-200 shadow-sm overflow-hidden">
+        <div
+          onClick={() => setCollapseDirectory(!collapseDirectory)}
+          className="p-4 sm:p-5 flex items-center justify-between cursor-pointer select-none bg-slate-50/50 hover:bg-slate-100/50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <Layers className="w-4 h-4 text-sage-deep" />
+            <div>
+              <h2 className="text-xs sm:text-sm font-black text-slate-900">
+                User Management Directory ({filteredAttendees.length} Shown)
+              </h2>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Search, upgrade role tiers, view multi-day scan status, and manage gate access
+              </p>
+            </div>
+          </div>
+          {collapseDirectory ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-slate-400" />}
+        </div>
+
+        {!collapseDirectory && (
+          <div className="p-4 sm:p-5 border-t border-slate-100 space-y-4">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="relative w-full sm:flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search attendee by full name, email, or ticket code..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sage-base"
+                />
+              </div>
+
+              <div className="w-full sm:w-64">
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  className="w-full py-2.5 px-3 rounded-xl border border-slate-200 text-xs font-bold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-sage-base cursor-pointer"
+                >
+                  <option value="ALL">All Account Roles</option>
+                  <option value="REGULAR">General Admission (Regular)</option>
+                  <option value="VIP_SILVER">VIP Silver Hospitality</option>
+                  <option value="VIP_GOLD">VIP Gold Delegate</option>
+                  <option value="VIP_PLATINUM">Platinum Protocol</option>
+                  <option value="TEAM_MEMBER">Official Team Member</option>
+                  <option value="VENDOR">Certified Vendor</option>
+                  <option value="ASSOCIATE">Partner Associate</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-3">
               {filteredAttendees.length === 0 ? (
-                <tr>
-                  <td colSpan="5" className="py-10 text-center text-slate-400">
-                    No attendees match the filter criteria.
-                  </td>
-                </tr>
+                <div className="py-12 text-center text-xs text-slate-400 italic">
+                  No attendees found matching search or filter criteria.
+                </div>
               ) : (
                 filteredAttendees.map((attendee) => {
-                  const isChecked = attendee.status === 'CHECKED_IN';
-                  const wristband = attendee.wristbandColor || TIER_WRISTBANDS[attendee.tier] || 'Emerald Green';
+                  const days = attendee.daysAttended || {};
+                  const isDay1 = days.day1 || attendee.status === 'CHECKED_IN';
+                  const isDay2 = days.day2;
+                  const isDay3 = days.day3;
+                  const isRevoked = attendee.accessRevoked === true;
+                  const roleConfig = ACCOUNT_TYPES[attendee.tier] || ACCOUNT_TYPES.REGULAR;
 
                   return (
-                    <tr key={attendee.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3.5 px-6">
-                        <p className="font-bold text-slate-900">{attendee.fullName}</p>
-                        <p className="text-[11px] text-slate-400">{attendee.email}</p>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-canvas-inset border border-slate-200 text-slate-800">
-                          {attendee.ticketCode}
-                        </span>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-slate-800">
-                            {attendee.tier}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500">
-                          {wristband}
-                        </p>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        {isChecked ? (
-                          <div>
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-successBg text-status-successText font-bold text-[10px]">
-                              <Check className="w-3 h-3 text-emerald-700" />
-                              <span>Checked In</span>
+                    <div
+                      key={attendee.id}
+                      className={`p-3.5 sm:p-4 rounded-2xl border-2 transition-all ${
+                        isRevoked
+                          ? 'border-rose-300 bg-rose-50/50'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-xs sm:text-sm font-black text-slate-900 truncate">
+                              {attendee.fullName || 'Anonymous Attendee'}
+                            </h3>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${roleConfig.badgeBg}`}>
+                              {roleConfig.label}
                             </span>
-                            {attendee.checkedInAt && (
-                              <p className="text-[10px] text-slate-400 mt-0.5">
-                                {attendee.checkedInAt} ({attendee.checkedInBy || 'Gate'})
-                              </p>
+                            {isRevoked && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold bg-rose-200 text-rose-900 border border-rose-400">
+                                ACCESS REVOKED
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-pendingBg text-status-pendingText font-bold text-[10px]">
-                            Pending
-                          </span>
-                        )}
-                      </td>
+                          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
+                            <span className="truncate">{attendee.email}</span>
+                            <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
+                              {attendee.ticketCode}
+                            </span>
+                            <span>Wristband: <strong className="text-slate-700">{attendee.wristbandColor || roleConfig.wristband}</strong></span>
+                          </div>
+                        </div>
 
-                      <td className="py-3.5 px-6 text-right">
-                        {!isChecked ? (
-                          <button
-                            onClick={() => handleManualCheckIn(attendee)}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold border border-emerald-200 transition-colors"
-                          >
-                            Manual Check-In
-                          </button>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 font-medium">
-                            Checked In
+                        {/* Multi-Day Tick Marks */}
+                        <div className="flex items-center gap-2 shrink-0 py-1">
+                          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mr-1">
+                            Days:
                           </span>
-                        )}
-                      </td>
-                    </tr>
+                          <button
+                            onClick={() => handleToggleDayMark(attendee, 'day1')}
+                            title="Click to toggle Day 1 attendance mark"
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-all ${
+                              isDay1
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
+                            }`}
+                          >
+                            <CheckCircle2 className={`w-3 h-3 ${isDay1 ? 'text-emerald-700' : 'text-slate-300'}`} />
+                            <span>Day 1</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleToggleDayMark(attendee, 'day2')}
+                            title="Click to toggle Day 2 attendance mark"
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-all ${
+                              isDay2
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
+                            }`}
+                          >
+                            <CheckCircle2 className={`w-3 h-3 ${isDay2 ? 'text-emerald-700' : 'text-slate-300'}`} />
+                            <span>Day 2</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleToggleDayMark(attendee, 'day3')}
+                            title="Click to toggle Day 3 attendance mark"
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-all ${
+                              isDay3
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
+                            }`}
+                          >
+                            <CheckCircle2 className={`w-3 h-3 ${isDay3 ? 'text-emerald-700' : 'text-slate-300'}`} />
+                            <span>Day 3</span>
+                          </button>
+                        </div>
+
+                        {/* Role Upgrade & Security Actions */}
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <select
+                            value={attendee.tier || 'REGULAR'}
+                            onChange={(e) => handleUpgradeAccountType(attendee, e.target.value)}
+                            className="py-1.5 px-2.5 rounded-xl border border-slate-300 text-[11px] font-bold bg-white text-slate-800 focus:ring-2 focus:ring-sage-base focus:outline-none cursor-pointer shadow-xs"
+                          >
+                            <option value="REGULAR">General Admission</option>
+                            <option value="VIP_SILVER">VIP Silver</option>
+                            <option value="VIP_GOLD">VIP Gold</option>
+                            <option value="VIP_PLATINUM">Platinum Protocol</option>
+                            <option value="TEAM_MEMBER">Team Member</option>
+                            <option value="VENDOR">Certified Vendor</option>
+                            <option value="ASSOCIATE">Partner Associate</option>
+                          </select>
+
+                          <button
+                            onClick={() => handleToggleAccessRevocation(attendee)}
+                            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1 border shadow-xs transition-all ${
+                              isRevoked
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                            }`}
+                          >
+                            {isRevoked ? <UserCheck2 className="w-3 h-3" /> : <UserX className="w-3 h-3" />}
+                            <span>{isRevoked ? 'Restore Access' : 'Revoke'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleResetQrCode(attendee)}
+                            title="Regenerate fresh ticket code & QR"
+                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 shadow-xs"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => handleClearMarkedDays(attendee)}
+                            title="Reset 3-day attendance check-ins"
+                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 shadow-xs"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   );
                 })
               )}
-            </tbody>
-          </table>
-        </div>
-        </div>
-      </ScrollReveal>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

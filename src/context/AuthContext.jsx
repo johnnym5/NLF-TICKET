@@ -22,6 +22,9 @@ export const TIER_WRISTBANDS = {
   VIP_SILVER: 'Metallic Silver Foil',
   VIP_GOLD: 'Champagne Gold Foil',
   VIP_PLATINUM: 'Obsidian Platinum Badge',
+  TEAM_MEMBER: 'Cobalt Blue Lanyard',
+  VENDOR: 'Tangerine Orange Badge',
+  ASSOCIATE: 'Royal Purple Band'
 };
 
 export const TIER_LABELS = {
@@ -29,11 +32,13 @@ export const TIER_LABELS = {
   VIP_SILVER: 'Silver Delegate VIP',
   VIP_GOLD: 'Gold Dignitary VIP',
   VIP_PLATINUM: 'Platinum Executive VIP',
+  TEAM_MEMBER: 'Official Team Member',
+  VENDOR: 'Certified Carnival Vendor',
+  ASSOCIATE: 'Partner Associate'
 };
 
-// High-entropy, collision-resistant code generator
+// High-entropy, collision-resistant ticket code generator
 export function generateTicketCode(tier = 'REGULAR') {
-  // Generate 8 alphanumeric entropy characters using crypto API if available
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let entropy = '';
   if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
@@ -51,6 +56,9 @@ export function generateTicketCode(tier = 'REGULAR') {
   if (tier === 'VIP_SILVER') return `GCC-VIP-SLVR-${entropy}`;
   if (tier === 'VIP_GOLD') return `GCC-VIP-GOLD-${entropy}`;
   if (tier === 'VIP_PLATINUM') return `GCC-VIP-PLAT-${entropy}`;
+  if (tier === 'TEAM_MEMBER') return `GCC-TEAM-${entropy}`;
+  if (tier === 'VENDOR') return `GCC-VNDR-${entropy}`;
+  if (tier === 'ASSOCIATE') return `GCC-ASSC-${entropy}`;
   return `GCC-2026-${entropy}`;
 }
 
@@ -60,25 +68,19 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [isNewRegistration, setIsNewRegistration] = useState(false);
 
-  // Synchronize Firestore attendee record whenever auth user changes
   useEffect(() => {
     let unsubscribeDoc = null;
-
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
-
       if (user) {
         try {
           const docRef = doc(db, 'attendees', user.uid);
-
-          // Real-time listener for live gate verification updates
           unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
               const data = docSnap.data();
               setAttendeeRecord(data);
               localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(data));
             } else {
-              // Check local cache if network/permission delay
               const cached = localStorage.getItem(`gcc_attendee_${user.uid}`);
               if (cached) {
                 setAttendeeRecord(JSON.parse(cached));
@@ -107,16 +109,13 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  // Helper to ensure attendee document exists in Firestore
   const ensureAttendeeDoc = async (user, fullName, tier = 'REGULAR', referralSource = 'direct') => {
     try {
       const docRef = doc(db, 'attendees', user.uid);
       const docSnap = await getDoc(docRef);
-
       if (!docSnap.exists()) {
         const ticketCode = generateTicketCode(tier);
         const wristbandColor = TIER_WRISTBANDS[tier] || TIER_WRISTBANDS.REGULAR;
-
         const newRecord = {
           uid: user.uid,
           fullName: fullName || user.displayName || 'Distinguished Guest',
@@ -125,13 +124,14 @@ export function AuthProvider({ children }) {
           tier,
           wristbandColor,
           status: 'REGISTERED',
+          accessRevoked: false,
+          daysAttended: { day1: false, day2: false, day3: false },
           checkedInAt: null,
           checkedInFullDate: null,
           checkedInBy: null,
           referralSource,
           createdAt: new Date().toISOString()
         };
-
         await setDoc(docRef, newRecord);
         setAttendeeRecord(newRecord);
         localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(newRecord));
@@ -148,7 +148,6 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // 1-Click Google Sign-In
   const signInWithGoogle = async (tier = 'REGULAR', referralSource = 'direct') => {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
@@ -156,7 +155,6 @@ export function AuthProvider({ children }) {
     return user;
   };
 
-  // Email + Password + Full Name Sign-Up
   const registerWithEmail = async (email, password, fullName, tier = 'REGULAR', referralSource = 'direct') => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const user = cred.user;
@@ -167,13 +165,11 @@ export function AuthProvider({ children }) {
     return user;
   };
 
-  // Email Sign-In
   const loginWithEmail = async (email, password) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
     return cred.user;
   };
 
-  // Sign-Out
   const logout = async () => {
     await signOut(auth);
     setAttendeeRecord(null);

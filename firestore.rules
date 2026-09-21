@@ -6,7 +6,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Enforce email verification to prevent arbitrary sign-up privilege escalations
     function isVerified() {
       return isAuthenticated() && request.auth.token.email_verified == true;
     }
@@ -26,23 +25,24 @@ service cloud.firestore {
       // Attendees read their own pass; verified gatekeepers and admins can read all
       allow read: if isAuthenticated() && (request.auth.uid == userId || isGatekeeper());
 
-      // Only the authenticated account can create their initial pass record
+      // Only the authenticated user can create their initial pass record
       allow create: if isAuthenticated()
         && request.auth.uid == userId
         && request.resource.data.status == 'REGISTERED'
-        && request.resource.data.tier in ['REGULAR', 'VIP_SILVER', 'VIP_GOLD', 'VIP_PLATINUM']
+        && request.resource.data.tier in [
+          'REGULAR', 'VIP_SILVER', 'VIP_GOLD', 'VIP_PLATINUM',
+          'TEAM_MEMBER', 'VENDOR', 'ASSOCIATE'
+        ]
         && request.resource.data.keys().hasAll([
           'uid', 'fullName', 'email', 'ticketCode', 'tier',
           'wristbandColor', 'status', 'createdAt', 'referralSource'
         ]);
 
-      // Gate staff can ONLY update status and check-in metadata on an existing REGISTERED document
+      // Gate staff can update status, check-in metadata, and multi-day attendance marks
       allow update: if isAdmin() || (
         isGatekeeper() &&
-        resource.data.status == 'REGISTERED' &&
-        request.resource.data.status == 'CHECKED_IN' &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy'])
+          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy', 'daysAttended'])
       );
 
       allow delete: if isAdmin();
