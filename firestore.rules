@@ -1,51 +1,103 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // --- Helper Functions ---
 
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isVerified() {
-      return isAuthenticated() && request.auth.token.email_verified == true;
+    function getUserRole() {
+      return request.auth.token.role;
     }
 
-    function isAdmin() {
-      return isVerified() && request.auth.token.email == 'admin@gcc.com';
+    function hasRole(role) {
+      return isAuthenticated() && getUserRole() == role;
+    }
+
+    function isAttendee() {
+      return hasRole('attendee') || isGatekeeper();
     }
 
     function isGatekeeper() {
-      return isVerified() && (
-        request.auth.token.email == 'admin@gcc.com' ||
-        request.auth.token.email.matches('qrscanner.*@gcc.com')
-      );
+      return hasRole('gatekeeper') || isSupervisor();
     }
 
+    function isSupervisor() {
+      return hasRole('gate_supervisor') || isAdmin();
+    }
+
+    function isAdmin() {
+      return hasRole('executive_admin');
+    }
+
+    // --- Collection Rules ---
+
     match /attendees/{userId} {
-      // Attendees read their own pass; verified gatekeepers and admins can read all
+      // Attendee can only read their own pass.
+      // Gatekeeper can read any pass for validation.
       allow read: if isAuthenticated() && (request.auth.uid == userId || isGatekeeper());
 
-      // Only the authenticated user can create their initial pass record
-      allow create: if isAuthenticated()
-        && request.auth.uid == userId
-        && request.resource.data.status == 'REGISTERED'
-        && request.resource.data.tier in [
-          'REGULAR', 'VIP_SILVER', 'VIP_GOLD', 'VIP_PLATINUM',
-          'TEAM_MEMBER', 'VENDOR', 'ASSOCIATE'
-        ]
-        && request.resource.data.keys().hasAll([
-          'uid', 'fullName', 'email', 'ticketCode', 'tier',
-          'wristbandColor', 'status', 'createdAt', 'referralSource'
-        ]);
+      // Attendees cannot create their own records directly anymore; Cloud Function does it.
+      // However, we might allow it if we want to support some edge cases, but the prompt says
+      // "Move ticket issuance to trusted server-side logic."
+      // So we'll disable direct client creation of attendees.
+      allow create: if false;
 
-      // Gate staff can update status, check-in metadata, and multi-day attendance marks
-      allow update: if isAdmin() || (
-        isGatekeeper() &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'checkedInAt', 'checkedInFullDate', 'checkedInBy', 'daysAttended'])
+      // Only admins or supervisors can modify sensitive fields.
+      // Gatekeepers can only update check-in status and metadata.
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (isSupervisor() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['accessRevoked', 'status', 'daysAttended', 'checkedInAt', 'checkedInFullDate', 'checkedInBy'])) ||
+        (isGatekeeper() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'daysAttended', 'checkedInAt', 'checkedInFullDate', 'checkedInBy']) &&
+          // Ensure they don't revoke access
+          request.resource.data.accessRevoked == resource.data.accessRevoked)
       );
 
+      // Attendees can never modify their own records.
+      // ticketCode, tier, wristbandColor are IMMUTABLE after creation by server.
+
       allow delete: if isAdmin();
+    }
+
+    match /vipInvitations/{invitationId} {
+      // Only admins can manage invitations.
+      // Public can read an invitation if they have the ID (to validate in Function, but also for UI hints).
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /operators/{operatorId} {
+      // Only admins can see and manage operators.
+      allow read, write: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      // Only admins can see audit logs.
+      // System (Functions) will write to them.
+      allow read: if isAdmin();
+      allow write: if false; // Only server-side writes
+    }
+
+    match /scanEvents/{eventId} {
+      allow read: if isGatekeeper();
+      allow write: if false;
+    }
+
+    match /eventStats/{statId} {
+      allow read: if isSupervisor();
+      allow write: if false; // Only server-side writes
+    }
+
+    match /gateStats/{statId} {
+        allow read: if isGatekeeper();
+        allow write: if isAdmin();
     }
   }
 }

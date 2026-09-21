@@ -6,22 +6,38 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:unit": "vitest run",
+    "test:rules": "cd tests && mocha rules.test.js --timeout 10000",
+    "test:e2e": "playwright test",
+    "test:load": "node tests/load-test.cjs",
+    "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.3",
+    "crypto-js": "^4.2.0",
+    "dexie": "^4.4.6",
     "firebase": "^10.13.2",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.441.0",
     "qrcode.react": "^3.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tweetnacl": "^1.0.3",
+    "vite-plugin-pwa": "^1.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/ui": "^2.1.9",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^30.1.0",
+    "playwright": "^1.63.0",
     "postcss": "^8.4.45",
     "tailwindcss": "^3.4.10",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vitest": "^2.1.9"
   }
 }

@@ -5,15 +5,16 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  sendEmailVerification
 } from 'firebase/auth';
 import {
   doc,
   getDoc,
-  setDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { auth, db, googleProvider } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, googleProvider, functions } from '../lib/firebase';
 
 const AuthContext = createContext();
 
@@ -37,34 +38,10 @@ export const TIER_LABELS = {
   ASSOCIATE: 'Partner Associate'
 };
 
-// High-entropy, collision-resistant ticket code generator
-export function generateTicketCode(tier = 'REGULAR') {
-  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let entropy = '';
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
-    const values = new Uint8Array(6);
-    window.crypto.getRandomValues(values);
-    for (let i = 0; i < values.length; i++) {
-      entropy += chars[values[i] % chars.length];
-    }
-  } else {
-    for (let i = 0; i < 6; i++) {
-      entropy += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-  }
-
-  if (tier === 'VIP_SILVER') return `GCC-VIP-SLVR-${entropy}`;
-  if (tier === 'VIP_GOLD') return `GCC-VIP-GOLD-${entropy}`;
-  if (tier === 'VIP_PLATINUM') return `GCC-VIP-PLAT-${entropy}`;
-  if (tier === 'TEAM_MEMBER') return `GCC-TEAM-${entropy}`;
-  if (tier === 'VENDOR') return `GCC-VNDR-${entropy}`;
-  if (tier === 'ASSOCIATE') return `GCC-ASSC-${entropy}`;
-  return `GCC-2026-${entropy}`;
-}
-
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [attendeeRecord, setAttendeeRecord] = useState(null);
+  const [userRole, setUserRole] = useState('attendee');
   const [loading, setLoading] = useState(true);
   const [isNewRegistration, setIsNewRegistration] = useState(false);
 
@@ -74,6 +51,10 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
       if (user) {
         try {
+          // Get custom claims
+          const idTokenResult = await user.getIdTokenResult();
+          setUserRole(idTokenResult.claims.role || 'attendee');
+
           const docRef = doc(db, 'attendees', user.uid);
           unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
@@ -99,6 +80,7 @@ export function AuthProvider({ children }) {
         }
       } else {
         setAttendeeRecord(null);
+        setUserRole('attendee');
         setLoading(false);
       }
     });
@@ -109,33 +91,23 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const ensureAttendeeDoc = async (user, fullName, tier = 'REGULAR', referralSource = 'direct') => {
+  const ensureAttendeeDoc = async (user, fullName, invitationId = null) => {
     try {
       const docRef = doc(db, 'attendees', user.uid);
       const docSnap = await getDoc(docRef);
+
       if (!docSnap.exists()) {
-        const ticketCode = generateTicketCode(tier);
-        const wristbandColor = TIER_WRISTBANDS[tier] || TIER_WRISTBANDS.REGULAR;
-        const newRecord = {
-          uid: user.uid,
-          fullName: fullName || user.displayName || 'Distinguished Guest',
-          email: user.email || 'attendee@carnival.ng',
-          ticketCode,
-          tier,
-          wristbandColor,
-          status: 'REGISTERED',
-          accessRevoked: false,
-          daysAttended: { day1: false, day2: false, day3: false },
-          checkedInAt: null,
-          checkedInFullDate: null,
-          checkedInBy: null,
-          referralSource,
-          createdAt: new Date().toISOString()
-        };
-        await setDoc(docRef, newRecord);
+        const registerAttendee = httpsCallable(functions, 'registerAttendee');
+        const result = await registerAttendee({ fullName, invitationId });
+        const newRecord = result.data;
+
         setAttendeeRecord(newRecord);
         localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(newRecord));
         setIsNewRegistration(true);
+
+        // Refresh token to get new claims
+        await user.getIdToken(true);
+
         return newRecord;
       } else {
         const data = docSnap.data();
@@ -144,24 +116,28 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       console.error('Registration failed:', err);
-      throw new Error('Verification service unavailable. Please check your connection.');
+      throw new Error(err.message || 'Verification service unavailable. Please check your connection.');
     }
   };
 
-  const signInWithGoogle = async (tier = 'REGULAR', referralSource = 'direct') => {
+  const signInWithGoogle = async (invitationId = null) => {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
-    await ensureAttendeeDoc(user, user.displayName, tier, referralSource);
+    await ensureAttendeeDoc(user, user.displayName, invitationId);
     return user;
   };
 
-  const registerWithEmail = async (email, password, fullName, tier = 'REGULAR', referralSource = 'direct') => {
+  const registerWithEmail = async (email, password, fullName, invitationId = null) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const user = cred.user;
     if (fullName) {
       await updateProfile(user, { displayName: fullName });
     }
-    await ensureAttendeeDoc(user, fullName, tier, referralSource);
+
+    // Send verification email
+    await sendEmailVerification(user);
+
+    await ensureAttendeeDoc(user, fullName, invitationId);
     return user;
   };
 
@@ -174,6 +150,7 @@ export function AuthProvider({ children }) {
     await signOut(auth);
     setAttendeeRecord(null);
     setIsNewRegistration(false);
+    setUserRole('attendee');
   };
 
   return (
@@ -181,6 +158,7 @@ export function AuthProvider({ children }) {
       value={{
         currentUser,
         attendeeRecord,
+        userRole,
         loading,
         isNewRegistration,
         setIsNewRegistration,

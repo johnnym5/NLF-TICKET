@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { soundFX } from '../utils/audio';
-import { executeAtomicCheckIn } from '../utils/atomic-checkin';
+import { validateTicketOffline, getCurrentFestivalDay } from '../utils/offline-validator';
+import { syncValidationDataset, queueScan, processSyncQueue } from '../utils/sync-engine';
+import { localDB, setConfig, getConfig } from '../lib/db-local';
 import { TIER_WRISTBANDS, useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
+import PinLock from '../components/PinLock';
 import ScrollReveal from '../components/ScrollReveal';
-import { 
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
+import Input from '../components/ui/Input';
+import {
   Camera, 
   CameraOff, 
   Lock, 
@@ -17,10 +21,13 @@ import {
   XCircle, 
   RefreshCw, 
   Search, 
-  KeyRound, 
-  Volume2, 
+  Volume2,
   Smartphone,
-  ChevronDown
+  ChevronDown,
+  Wifi,
+  WifiOff,
+  History,
+  Terminal
 } from 'lucide-react';
 
 const GATE_LOCATIONS = [
@@ -31,448 +38,278 @@ const GATE_LOCATIONS = [
 ];
 
 export default function GatekeeperScanner() {
-  const { currentUser } = useAuth();
+  const { userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLocked, setIsLocked] = useState(true);
+  const [hasPin, setHasPin] = useState(!!localStorage.getItem('gcc_gate_pin_hash'));
+
   const [selectedGate, setSelectedGate] = useState(GATE_LOCATIONS[0]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncing, setSyncing] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Scanner states
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
-  const [scannedResult, setScannedResult] = useState(null); // { status: 'VALID' | 'DUPLICATE' | 'INVALID', data, message }
+  const [scannedResult, setScannedResult] = useState(null);
   const [manualCode, setManualCode] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   const scannerRef = useRef(null);
   const processingRef = useRef(false);
 
-  // Validate Gatekeeper Email
   useEffect(() => {
-    const allowedPatterns = ['admin@gcc.com', 'qrscanner*@gcc.com'];
-    if (currentUser) {
-      const isAllowed = allowedPatterns.some(pattern => {
-        if (pattern.includes('*')) {
-          const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-          return regex.test(currentUser.email);
-        }
-        return currentUser.email === pattern;
-      });
-      setIsAuthenticated(isAllowed);
-    } else {
-      setIsAuthenticated(false);
-    }
-  }, [currentUser]);
+    setIsAuthenticated(['gatekeeper', 'gate_supervisor', 'executive_admin'].includes(userRole));
+  }, [userRole]);
 
-  // Process and verify scanned code against Firestore
-  const processTicketCode = async (rawCode) => {
-    const cleanCode = (rawCode || '').trim().toUpperCase();
-    if (!cleanCode || processingRef.current) return;
+  useEffect(() => {
+    const init = async () => {
+      const savedGate = await getConfig('assigned_gate');
+      if (savedGate) setSelectedGate(savedGate);
+      setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
+    };
+    init();
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isOnline && isAuthenticated) handleSync();
+  }, [isOnline, isAuthenticated]);
+
+  const handleSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await processSyncQueue();
+      await syncValidationDataset();
+      setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleGateChange = async (gate) => {
+    setSelectedGate(gate);
+    await setConfig('assigned_gate', gate);
+  };
+
+  const handleSetPin = (hash) => {
+    localStorage.setItem('gcc_gate_pin_hash', hash);
+    setHasPin(true);
+    setIsLocked(false);
+  };
+
+  const processTicketCode = async (rawPayload) => {
+    if (processingRef.current) return;
     processingRef.current = true;
     setIsProcessing(true);
+    setScannedResult(null);
 
+    const startTime = performance.now();
     try {
-      const result = await executeAtomicCheckIn(cleanCode, selectedGate);
+      const result = await validateTicketOffline(rawPayload);
+      await localDB.performanceLogs.add({
+        event: 'QR_SCAN', status: result.status,
+        duration: performance.now() - startTime,
+        timestamp: Date.now()
+      });
 
       if (result.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
-      } else if (result.status === 'REVOKED') {
-        soundFX.playWarningBuzzer();
-        soundFX.triggerDuplicateHaptic();
-      } else if (result.status === 'DUPLICATE') {
-        soundFX.playWarningBuzzer();
-        soundFX.triggerDuplicateHaptic();
+        await queueScan({
+          tid: result.attendee.tid, uid: result.attendee.uid,
+          gateId: selectedGate, timestamp: Date.now(),
+          eventDay: getCurrentFestivalDay(), source: isOnline ? 'HYBRID' : 'OFFLINE'
+        });
+        setPendingSyncCount(await localDB.scanQueue.where('syncStatus').equals('PENDING').count());
+        if (isOnline) processSyncQueue();
       } else {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();
       }
 
-      setScannedResult(result);
-    } catch (err) {
-      console.error('Ticket verification error:', err);
       setScannedResult({
-        status: 'INVALID',
-        code: cleanCode,
-        message: 'SYSTEM ERROR: Verification failed. Please check network connection.'
+        ...result,
+        data: result.attendee ? {
+          fullName: result.attendee.fullName || 'Registered Guest',
+          ticketCode: result.attendee.tid,
+          tier: result.attendee.t,
+          checkedInAt: new Date().toLocaleTimeString()
+        } : null
       });
+
+    } catch (err) {
+      setScannedResult({ status: 'INVALID', message: 'LOCAL VERIFICATION ERROR' });
     } finally {
       setIsProcessing(false);
-      setTimeout(() => {
-        processingRef.current = false;
-      }, 1500);
+      setTimeout(() => { processingRef.current = false; }, 1500);
     }
   };
 
-  // Start Camera Scanner
   const startScanner = async () => {
     setCameraError('');
     setScannedResult(null);
-
     try {
-      // First, ensure any existing instance is fully stopped and cleaned up
-      if (scannerRef.current) {
-        try {
-          await scannerRef.current.stop();
-        } catch (e) {
-          console.warn('Stop error:', e);
-        }
-        scannerRef.current = null;
-      }
-
-      // Check if browser supports mediaDevices
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        // Modern browsers require a Secure Context (HTTPS or localhost) for camera access.
-        // Mobile browsers are particularly strict about this.
-        const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
-
-        if (!isSecure) {
-          setCameraError('Camera access requires HTTPS. You are currently on an insecure connection (HTTP). Please use a secure URL or access via localhost for testing.');
-        } else {
-          setCameraError('Camera access not supported by this browser. Please use Chrome or Safari.');
-        }
-        return;
-      }
-
+      if (scannerRef.current) await scannerRef.current.stop().catch(() => {});
       const html5Qr = new Html5Qrcode('gatekeeper-reader');
       scannerRef.current = html5Qr;
-
-      const config = {
-        fps: 20,
-        qrbox: (viewfinderWidth, viewfinderHeight) => {
-          // Scalable QR box: 70% of the smallest dimension
-          const size = Math.min(viewfinderWidth, viewfinderHeight) * 0.7;
-          return { width: size, height: size };
-        },
-        aspectRatio: 1.0,
-      };
-
-      // Start scanning with the back camera (environment)
-      await html5Qr.start(
-        { facingMode: 'environment' },
-        config,
-        (decodedText) => {
-          processTicketCode(decodedText);
-        },
-        (errorMessage) => {
-          // Frame misses are normal, no action needed
-        }
-      );
-
+      await html5Qr.start({ facingMode: 'environment' }, { fps: 25, qrbox: (w, h) => { const s = Math.min(w, h) * 0.7; return { width: s, height: s }; } }, (text) => processTicketCode(text));
       setCameraActive(true);
     } catch (err) {
-      console.error('Camera initiation failed:', err);
-      const errorMsg = err?.toString() || '';
-
-      if (errorMsg.includes('NotAllowedError') || errorMsg.includes('Permission denied')) {
-        setCameraError('Camera permission denied. Please enable camera access in your browser settings and refresh.');
-      } else if (errorMsg.includes('NotFoundError')) {
-        setCameraError('No camera found on this device.');
-      } else {
-        setCameraError('Could not access camera. Ensure you are on HTTPS and not using the camera in another tab.');
-      }
+      setCameraError('Camera unavailable or permission denied.');
       setCameraActive(false);
     }
   };
 
-  // Stop Camera Scanner
   const stopScanner = async () => {
-    if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-        scannerRef.current = null;
-      } catch (err) {
-        console.warn('Error stopping scanner:', err);
-      }
-    }
+    if (scannerRef.current) await scannerRef.current.stop().catch(() => {});
     setCameraActive(false);
   };
 
-  // Auto-start scanner when authenticated and clean up on unmount
   useEffect(() => {
-    if (isAuthenticated) {
-      // Give the DOM a moment to render the viewfinder container
-      const timer = setTimeout(() => {
-        startScanner();
-      }, 500);
-
-      return () => {
-        clearTimeout(timer);
-        if (scannerRef.current) {
-          scannerRef.current.stop().catch(() => {});
-        }
-      };
+    if (isAuthenticated && !isLocked) {
+      const timer = setTimeout(() => startScanner(), 500);
+      return () => { if (scannerRef.current) scannerRef.current.stop().catch(() => {}); clearTimeout(timer); };
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isLocked]);
 
-  const handleManualSubmit = (e) => {
-    e.preventDefault();
-    if (manualCode.trim()) {
-      processTicketCode(manualCode);
-      setManualCode('');
-    }
-  };
+  if (!isAuthenticated) return <StaffLogin title="Operational Terminal" allowedEmails={[]} onSuccess={() => {}} />;
+  if (!hasPin) return <PinLock isSetting={true} onSetPin={handleSetPin} />;
+  if (isLocked) return <PinLock onUnlock={() => setIsLocked(false)} />;
 
-  // 1. Authentication Barrier
-  if (!isAuthenticated) {
-    return (
-      <StaffLogin
-        title="Staff Log In"
-        subtitle=""
-        allowedEmails={['admin@gcc.com', 'qrscanner*@gcc.com']}
-        onSuccess={() => setIsAuthenticated(true)}
-      />
-    );
-  }
-
-  // 2. Active Gatekeeper Verification Console
   return (
-    <div className="max-w-xl mx-auto px-4 py-6 sm:py-8 space-y-6">
-      {/* Top Header & Gate Selector */}
-      <ScrollReveal delay={100} direction="up" duration={850}>
-      <div className="bg-white/85 backdrop-blur-xl rounded-2xl border-2 border-slate-300/90 p-4 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-sage-base text-sage-deep border border-sage-border flex items-center justify-center font-bold shadow-xs">
-            <ShieldCheck className="w-5 h-5" />
+    <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
+      {/* Tactical Header */}
+      <div className="bg-slate-900 rounded-xl p-5 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-slate-800">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-emerald-400">
+            <Terminal className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-900 leading-tight">
-              Live Gate Verification
-            </h2>
+            <h2 className="text-sm font-black text-white uppercase tracking-tight">Gate Terminal 2026</h2>
+            <div className="flex items-center gap-2 mt-1">
+              {isOnline ? (
+                <Badge variant="success" className="bg-emerald-950/40 text-emerald-400 border-emerald-900/50">ONLINE</Badge>
+              ) : (
+                <Badge variant="error" className="bg-rose-950/40 text-rose-400 border-rose-900/50">OFFLINE MODE</Badge>
+              )}
+              {pendingSyncCount > 0 && <span className="text-[10px] font-black text-amber-500 animate-pulse">{pendingSyncCount} QUEUED</span>}
+            </div>
           </div>
         </div>
 
-        {/* Gate Selection Dropdown */}
-        <div className="relative">
+        <div className="flex items-center gap-2">
           <select
             value={selectedGate}
-            onChange={(e) => setSelectedGate(e.target.value)}
-            className="text-xs font-semibold bg-white/90 border-2 border-slate-300 rounded-xl px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-sage-base pr-8 appearance-none cursor-pointer shadow-xs"
+            onChange={(e) => handleGateChange(e.target.value)}
+            className="flex-1 sm:w-48 bg-slate-800 border-none rounded-lg px-3 py-2 text-xs font-bold text-slate-300 focus:ring-2 focus:ring-emerald-500 transition-all appearance-none cursor-pointer"
           >
-            {GATE_LOCATIONS.map((gate) => (
-              <option key={gate} value={gate}>{gate}</option>
-            ))}
+            {GATE_LOCATIONS.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Button variant="secondary" className="bg-slate-800 border-none text-slate-400 hover:bg-slate-700 p-2.5 rounded-lg" onClick={() => setIsLocked(true)}>
+            <Lock className="w-4 h-4" />
+          </Button>
         </div>
       </div>
-      </ScrollReveal>
 
-      {/* Verification Feedback Result Card (High Priority Modal/Banner) */}
-      {scannedResult && (
-        <div className="animate-fadeIn">
-          {scannedResult.status === 'VALID' && (
-            <div className="p-5 rounded-2xl bg-status-successBg border-2 border-status-successBorder text-status-successText shadow-card">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-7 h-7 text-emerald-700 shrink-0" />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-200/70 text-emerald-900">
-                      Entry Approved
-                    </span>
-                    <span className="text-xs font-mono text-emerald-800">
-                      {scannedResult.data?.checkedInAt}
-                    </span>
-                  </div>
-                  <h3 className="text-base sm:text-lg font-extrabold mt-1 leading-tight">
-                    {scannedResult.message}
-                  </h3>
-                  <div className="mt-2 text-xs text-emerald-800/90 font-medium">
-                    <p>Attendee: <strong>{scannedResult.data?.fullName}</strong> ({scannedResult.data?.ticketCode})</p>
-                    <p>Tier: {scannedResult.data?.tier} • Hand physical band immediately.</p>
-                  </div>
-                </div>
-              </div>
+      {/* Viewfinder Container */}
+      <div className="premium-card bg-black border-slate-800 p-1 relative shadow-2xl">
+        <div id="gatekeeper-reader" className="w-full aspect-square max-w-[380px] mx-auto bg-slate-950 rounded-lg overflow-hidden" />
+
+        {cameraActive && (
+          <div className="absolute inset-0 pointer-events-none p-8 flex flex-col justify-between">
+            <div className="flex justify-between">
+              <div className="w-8 h-8 border-t-2 border-l-2 border-emerald-400/50 rounded-tl-lg" />
+              <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-400/50 rounded-tr-lg" />
             </div>
-          )}
-
-          {scannedResult.status === 'DUPLICATE' && (
-            <div className="p-5 rounded-2xl bg-status-duplicateBg border-2 border-status-duplicateBorder text-status-duplicateText shadow-card animate-shake">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-7 h-7 text-rose-700 shrink-0 animate-bounce" />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-rose-200 text-rose-900">
-                      Security Alert
-                    </span>
-                    <span className="text-xs font-mono text-rose-800 font-bold">
-                      DO NOT ADMIT
-                    </span>
-                  </div>
-                  <h3 className="text-sm sm:text-base font-extrabold mt-1 leading-tight text-rose-950">
-                    {scannedResult.message}
-                  </h3>
-                  <div className="mt-2 text-xs text-rose-900 font-medium">
-                    <p>Holder: <strong>{scannedResult.data?.fullName}</strong> ({scannedResult.data?.ticketCode})</p>
-                    <p className="font-bold underline mt-0.5">Physical wristband already distributed for this credential.</p>
-                  </div>
-                </div>
-              </div>
+            <div className="flex justify-between">
+              <div className="w-8 h-8 border-b-2 border-l-2 border-emerald-400/50 rounded-bl-lg" />
+              <div className="w-8 h-8 border-b-2 border-r-2 border-emerald-400/50 rounded-br-lg" />
             </div>
-          )}
-
-          {scannedResult.status === 'INVALID' && (
-            <div className="p-5 rounded-2xl bg-status-duplicateBg border-2 border-status-duplicateBorder text-status-duplicateText shadow-card">
-              <div className="flex items-start gap-3">
-                <XCircle className="w-7 h-7 text-rose-700 shrink-0" />
-                <div>
-                  <h3 className="text-sm sm:text-base font-extrabold text-rose-950">
-                    {scannedResult.message}
-                  </h3>
-                  <p className="text-xs text-rose-800 mt-1">
-                    Scanned code: <span className="font-mono font-bold">{scannedResult.code}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Live Camera Viewfinder Card */}
-      <ScrollReveal delay={250} direction="up" duration={900}>
-      <div className="bg-white/85 backdrop-blur-2xl rounded-3xl border-2 border-slate-300/90 p-5 sm:p-6 shadow-[0_20px_45px_-8px_rgba(15,23,42,0.18),inset_0_2px_0_rgba(255,255,255,1)] overflow-hidden">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2 text-xs font-black text-slate-800">
-            <Camera className="w-4 h-4 text-sage-deep" />
-            <span>Camera Viewfinder</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {cameraActive ? (
-              <button
-                onClick={stopScanner}
-                className="px-3.5 py-1.5 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs font-bold flex items-center gap-1.5 border-2 border-slate-300 shadow-sm transition-all active:translate-y-0.5"
-              >
-                <CameraOff className="w-3.5 h-3.5" />
-                <span>Pause</span>
-              </button>
-            ) : (
-              <button
-                onClick={startScanner}
-                className="px-3.5 py-1.5 rounded-xl bg-sage-deep hover:bg-emerald-950 text-white text-xs font-black flex items-center gap-1.5 border-2 border-emerald-950/40 shadow-3d-btn active:translate-y-0.5 transition-all"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>Start Camera</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Viewfinder Container */}
-        <div className="relative w-full aspect-square max-w-[340px] mx-auto bg-slate-900 rounded-2xl overflow-hidden flex items-center justify-center border-2 border-slate-800 shadow-2xl">
-          <div id="gatekeeper-reader" className="w-full h-full object-cover"></div>
-
-          {/* Animated Laser Scanline when Camera is active */}
-          {cameraActive && (
-            <div className="absolute inset-0 pointer-events-none">
-              <div className="w-full h-0.5 bg-emerald-400 shadow-[0_0_12px_#34d399] absolute animate-scanline" />
-              {/* Corner Viewfinder Brackets */}
-              <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg" />
-              <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg" />
-              <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg" />
-              <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-emerald-400 rounded-br-lg" />
-            </div>
-          )}
-
-          {/* Placeholder when Camera is stopped or Error */}
-          {!cameraActive && (
-            <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center p-6 text-center text-slate-400 z-10">
-              {cameraError ? (
-                <>
-                  <AlertTriangle className="w-12 h-12 text-rose-500 mb-3 animate-pulse" />
-                  <p className="text-xs font-bold text-white mb-2">Camera Access Required</p>
-                  <p className="text-[11px] text-slate-400 mb-4 max-w-[240px]">
-                    {cameraError}
-                  </p>
-                  <button
-                    onClick={startScanner}
-                    className="px-5 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold border-2 border-rose-800 shadow-md hover:bg-rose-700 transition-all flex items-center gap-2 active:translate-y-0.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Retry Permission
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Smartphone className="w-12 h-12 text-slate-600 mb-3" />
-                  <p className="text-xs font-bold text-slate-300">
-                    Camera is Currently Inactive
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1 max-w-[220px]">
-                    Tap below to activate live video stream for instant QR scanning.
-                  </p>
-                  <button
-                    onClick={startScanner}
-                    className="mt-4 px-5 py-2.5 rounded-xl bg-sage-deep text-white text-xs font-black border-2 border-emerald-950/40 shadow-3d-btn hover:bg-emerald-950 transition-all active:translate-y-0.5"
-                  >
-                    Activate Scanner
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {cameraError && !cameraActive && (
-          <div className="mt-4 p-3 rounded-xl bg-rose-50/90 border-2 border-rose-200 flex flex-col gap-2 shadow-sm">
-            <div className="flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-rose-700 leading-relaxed font-medium">
-                <strong>Steward Note:</strong> If prompts don't appear, check your address bar for a
-                <span className="inline-block mx-1 px-1.5 py-0.5 bg-rose-200 rounded font-bold text-rose-900">Camera Icon</span>
-                to reset site permissions manually.
-              </p>
-            </div>
-
-            {window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && (
-              <div className="pt-2 border-t border-rose-200/50 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-[10px] text-amber-800 leading-relaxed">
-                  <strong>Testing Tip:</strong> Mobile browsers block camera access on <span className="font-bold underline">HTTP</span>. Use an HTTPS tunnel (like ngrok) or access via <span className="font-bold underline">https://</span> to scan on your phone.
-                </p>
-              </div>
-            )}
           </div>
         )}
 
-        <div className="mt-4 pt-3 border-t-2 border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-medium">
-          <span className="flex items-center gap-1">
-            <Volume2 className="w-3.5 h-3.5 text-sage-deep" />
-            Audible & Haptic feedback active
-          </span>
-          <span>Response latency &lt;250ms</span>
-        </div>
+        {!cameraActive && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 text-center p-8">
+             <Camera className="w-12 h-12 text-slate-700 mb-4" />
+             <h3 className="text-white font-black text-sm mb-2 uppercase tracking-widest">Scanner Standby</h3>
+             <p className="text-slate-500 text-xs mb-8 max-w-[200px]">Activate camera for immediate pass verification</p>
+             <Button className="w-full max-w-[200px]" onClick={startScanner}>Activate Camera</Button>
+          </div>
+        )}
       </div>
-      </ScrollReveal>
 
-      {/* Manual Code Fallback Input (for cracked or dead screens) */}
-      <ScrollReveal delay={400} direction="up" duration={900}>
-      <div className="bg-white/85 backdrop-blur-xl rounded-2xl border-2 border-slate-300/90 p-5 shadow-md">
-        <h3 className="text-xs font-black text-slate-800 mb-1 flex items-center gap-1.5">
-          <Search className="w-4 h-4 text-slate-500" />
-          <span>Manual Ticket Code Fallback</span>
-        </h3>
-        <p className="text-[11px] text-slate-500 mb-3">
-          For attendees with cracked glass, flat phone batteries, or paper printouts.
-        </p>
+      <div className="flex justify-center">
+        {cameraActive && (
+          <Button variant="secondary" className="w-full border-slate-200 text-slate-500" icon={CameraOff} onClick={stopScanner}>
+            Pause Terminal
+          </Button>
+        )}
+      </div>
 
-        <form onSubmit={handleManualSubmit} className="flex gap-2">
-          <input
-            type="text"
-            placeholder="e.g. GCC-2026-4821 or GCC-VIP-GOLD-019"
+      {/* Result Display - Overlays or fixed area */}
+      {scannedResult && (
+        <div className="animate-fadeIn">
+          <div className={`p-6 rounded-xl border-2 ${
+            scannedResult.status === 'VALID' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' :
+            'bg-rose-50 border-rose-400 text-rose-900 animate-shake'
+          }`}>
+            <div className="flex items-start gap-4">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
+                scannedResult.status === 'VALID' ? 'bg-emerald-100' : 'bg-rose-100'
+              }`}>
+                {scannedResult.status === 'VALID' ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black tracking-tight leading-tight mb-2 uppercase">{scannedResult.message}</h3>
+                {scannedResult.data && (
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold opacity-80">{scannedResult.data.fullName}</p>
+                    <p className="text-xs font-black uppercase tracking-widest">{scannedResult.data.tier}</p>
+                    {scannedResult.status === 'VALID' && (
+                      <div className="mt-4 p-3 bg-white/50 border border-emerald-200 rounded-lg text-center">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-1">Wristband Allocation</p>
+                        <p className="text-sm font-black uppercase">{TIER_WRISTBANDS[scannedResult.data.tier] || 'GREEN'}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Override */}
+      <div className="premium-card p-6 bg-slate-50">
+        <div className="flex items-center gap-2 mb-4">
+          <Search className="w-4 h-4 text-slate-400" />
+          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Manual Override</h3>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); processTicketCode(manualCode); setManualCode(''); }} className="flex gap-2">
+          <Input
+            placeholder="TICKET PAYLOAD..."
+            className="flex-1"
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
-            className="flex-1 min-h-[48px] px-3.5 py-2.5 rounded-xl border-2 border-slate-300 text-xs font-mono bg-canvas-inset focus:bg-white focus:outline-none focus:ring-2 focus:ring-sage-base uppercase shadow-inner"
           />
-          <button
-            type="submit"
-            disabled={isProcessing || !manualCode.trim()}
-            className="min-h-[48px] px-6 py-2.5 rounded-xl bg-sage-deep hover:bg-emerald-950 text-white font-black text-xs border-2 border-emerald-950/40 shadow-3d-btn disabled:opacity-50 transition-all shrink-0 active:translate-y-0.5"
-          >
-            {isProcessing ? 'Verifying...' : 'Verify'}
-          </button>
+          <Button type="submit" className="shrink-0" loading={isProcessing}>Verify</Button>
         </form>
       </div>
-      </ScrollReveal>
+
+      <div className="flex items-center justify-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest pt-4">
+         <ShieldCheck className="w-3.5 h-3.5" />
+         Secure Operational Terminal v1.4
+      </div>
     </div>
   );
 }
