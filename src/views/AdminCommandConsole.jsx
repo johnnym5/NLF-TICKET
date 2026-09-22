@@ -68,8 +68,11 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [overrideModal, setOverrideModal] = useState({ open: false, attendee: null, action: '', reason: '' });
   const [roleModal, setRoleModal] = useState({ open: false, attendee: null });
   const [searchTerm, setSearchTerm] = useState('');
+  const [tierFilter, setTierFilter] = useState('ALL');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [syncingStats, setSyncingStats] = useState(false);
+  const [showExecutiveDashboard, setShowExecutiveDashboard] = useState(false);
 
   useEffect(() => {
     setIsAuthenticated(userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com');
@@ -96,8 +99,11 @@ export default function AdminCommandConsole({ onNavigate }) {
       let q = collection(db, 'attendees');
 
       // Applying filters
+      if (tierFilter !== 'ALL') {
+        q = query(q, where('tier', '==', tierFilter));
+      }
       if (roleFilter !== 'ALL') {
-        q = query(q, where('tier', '==', roleFilter));
+        q = query(q, where('role', '==', roleFilter));
       }
       if (statusFilter !== 'ALL') {
         q = query(q, where('status', '==', statusFilter));
@@ -135,20 +141,70 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   };
 
-  useEffect(() => { if (isAuthenticated) loadAttendees(true); }, [isAuthenticated, roleFilter, statusFilter]);
+  useEffect(() => { if (isAuthenticated) loadAttendees(true); }, [isAuthenticated, roleFilter, tierFilter, statusFilter]);
+
+  const handleSyncCounters = async () => {
+    if (!window.confirm('Recalculate global event statistics? This will sync the counters with the current database state.')) return;
+    setSyncingStats(true);
+    try {
+      const snap = await getDocs(collection(db, 'attendees'));
+      const all = snap.docs.map(d => d.data());
+
+      const total = all.length;
+      const present = all.filter(a => a.status === 'CHECKED_IN').length;
+
+      // Calculate day distribution
+      const dayDistribution = { day1: 0, day2: 0, day3: 0 };
+      all.forEach(a => {
+        if (a.daysAttended) {
+          if (a.daysAttended.day1) dayDistribution.day1++;
+          if (a.daysAttended.day2) dayDistribution.day2++;
+          if (a.daysAttended.day3) dayDistribution.day3++;
+        }
+      });
+
+      const statsRef = doc(db, 'eventStats', 'global');
+      await setDoc(statsRef, {
+        totalRegistrations: total,
+        totalCheckedIn: present,
+        dayCheckins: dayDistribution,
+        lastSyncedAt: serverTimestamp()
+      }, { merge: true });
+
+      alert('Statistics synchronized successfully.');
+    } catch (err) {
+      alert(`Sync failed: ${err.message}`);
+    } finally {
+      setSyncingStats(false);
+    }
+  };
 
   const handleSetRole = async (attendee, role) => {
     if (!window.confirm(`Update ${attendee.fullName} role to ${role}?`)) return;
     try {
       setLoading(true);
-      // On Spark plan, we update a role field in the document.
-      // Note: This won't update Custom Claims (requires functions), but we use email fallback anyway.
       await updateDoc(doc(db, 'attendees', attendee.id), { role });
-      alert(`Role for ${attendee.fullName} updated to ${role} locally.`);
+      alert(`Role for ${attendee.fullName} updated to ${role}.`);
       setRoleModal({ open: false, attendee: null });
       loadAttendees(true);
     } catch (err) {
       alert(`Update failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetTier = async (attendee, tier) => {
+    if (!window.confirm(`Upgrade ${attendee.fullName} to ${tier}?`)) return;
+    try {
+      setLoading(true);
+      const wristbandColor = TIER_WRISTBANDS[tier] || 'Emerald Green';
+      await updateDoc(doc(db, 'attendees', attendee.id), { tier, wristbandColor });
+      alert(`Tier for ${attendee.fullName} updated to ${tier}.`);
+      setRoleModal({ open: false, attendee: null });
+      loadAttendees(true);
+    } catch (err) {
+      alert(`Tier update failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -209,28 +265,30 @@ export default function AdminCommandConsole({ onNavigate }) {
               User: <span className="text-slate-800">{roleModal.attendee.fullName}</span>
             </p>
 
-            <div className="space-y-3 mb-8">
-              <button
-                onClick={() => handleSetRole(roleModal.attendee, 'attendee')}
-                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
-              >
-                <p className="text-sm font-black text-slate-900">Standard Attendee</p>
-                <p className="text-[10px] text-slate-500">Public access, view own pass only.</p>
-              </button>
-              <button
-                onClick={() => handleSetRole(roleModal.attendee, 'gatekeeper')}
-                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
-              >
-                <p className="text-sm font-black text-slate-900">Gatekeeper</p>
-                <p className="text-[10px] text-slate-500">Can access QR Scanner and check-in attendees.</p>
-              </button>
-              <button
-                onClick={() => handleSetRole(roleModal.attendee, 'executive_admin')}
-                className="w-full p-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition-colors"
-              >
-                <p className="text-sm font-black text-slate-900">Executive Admin</p>
-                <p className="text-[10px] text-slate-500">Full dashboard access and permission management.</p>
-              </button>
+            <div className="space-y-4 mb-8">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Account Role</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => handleSetRole(roleModal.attendee, 'attendee')} className={`p-2 rounded-lg border text-xs font-bold transition-all ${roleModal.attendee.role === 'attendee' ? 'bg-slate-900 text-white border-slate-900' : 'border-slate-200 hover:bg-slate-50'}`}>Attendee</button>
+                  <button onClick={() => handleSetRole(roleModal.attendee, 'gatekeeper')} className={`p-2 rounded-lg border text-xs font-bold transition-all ${roleModal.attendee.role === 'gatekeeper' ? 'bg-slate-900 text-white border-slate-900' : 'border-slate-200 hover:bg-slate-50'}`}>Staff</button>
+                  <button onClick={() => handleSetRole(roleModal.attendee, 'executive_admin')} className={`p-2 rounded-lg border text-xs font-bold transition-all ${roleModal.attendee.role === 'executive_admin' ? 'bg-slate-900 text-white border-slate-900' : 'border-slate-200 hover:bg-slate-50'}`}>Admin</button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Entry Tier</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.keys(ACCOUNT_TYPES).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => handleSetTier(roleModal.attendee, t)}
+                      className={`p-2 rounded-lg border text-[10px] font-black uppercase transition-all ${roleModal.attendee.tier === t ? 'bg-amber-400 text-slate-900 border-amber-500' : 'border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      {t.replace('VIP_', '')}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <Button variant="secondary" className="w-full" onClick={() => setRoleModal({ open: false, attendee: null })}>Cancel</Button>
@@ -261,62 +319,82 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <span className="section-label">Management Portal</span>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Executive Command Hub</h1>
-          <p className="text-sm text-slate-500 font-medium">Real-time attendance telemetry and credential management</p>
+      {/* Header with Collapsible Trigger */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <div
+          className="flex-1 cursor-pointer group"
+          onClick={() => setShowExecutiveDashboard(!showExecutiveDashboard)}
+        >
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-lg transition-colors ${showExecutiveDashboard ? 'bg-sage-deep text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'}`}>
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-black text-slate-900 tracking-tight uppercase">Executive Command Hub</h1>
+                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${showExecutiveDashboard ? 'rotate-180' : ''}`} />
+              </div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
+                {showExecutiveDashboard ? 'Hide Real-time Venue Telemetry' : 'Click to View Attendance Statistics & Distribution'}
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary" icon={Activity} onClick={() => onNavigate?.('diagnostics')}>Diagnostics</Button>
-          <Button icon={Download} onClick={handleExportCsv}>Export Data</Button>
+          <Button variant="secondary" size="sm" icon={RefreshCw} loading={syncingStats} onClick={handleSyncCounters}>Sync Stats</Button>
+          <Button variant="secondary" size="sm" icon={Activity} onClick={() => onNavigate?.('diagnostics')}>Diagnostics</Button>
+          <Button size="sm" icon={Download} onClick={handleExportCsv}>Export Data</Button>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Registrations', val: stats.totalRegistrations, icon: Users, variant: 'dark' },
-          { label: 'Checked In', val: stats.totalCheckedIn, icon: UserCheck, variant: 'success' },
-          { label: 'Venue Turnout', val: `${stats.totalRegistrations > 0 ? Math.round((stats.totalCheckedIn / stats.totalRegistrations) * 100) : 0}%`, icon: TrendingUp, variant: 'pending' },
-          { label: 'VIP Arrivals', val: Object.entries(stats.gateCheckins || {}).find(([k]) => k.includes('VIP'))?.[1] || 0, icon: Sparkles, variant: 'gold' }
-        ].map((stat, i) => (
-          <div key={i} className="premium-card p-6 flex flex-col justify-between h-32">
-            <div className="flex items-center justify-between">
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{stat.label}</span>
-               <stat.icon className="w-4 h-4 text-slate-300" />
-            </div>
-            <p className="text-3xl font-black text-slate-900 tracking-tighter">{stat.val}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Turnout Bar */}
-      <div className="premium-card p-8">
-        <div className="flex items-center gap-2 mb-8">
-          <BarChart3 className="w-5 h-5 text-sage-deep" />
-          <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">3-Day Attendance Distribution</h3>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-          {FESTIVAL_DAYS.map((fest) => {
-            const count = stats.dayCheckins?.[fest.id] || 0;
-            const pct = stats.totalRegistrations > 0 ? Math.round((count / stats.totalRegistrations) * 100) : 0;
-            return (
-              <div key={fest.id} className="space-y-3">
-                <div className="flex items-end justify-between">
-                  <span className="text-xs font-black text-slate-900 uppercase">{fest.label}</span>
-                  <span className="text-xs font-mono font-black text-sage-deep">{count}</span>
+      {/* Collapsible Stats Section */}
+      {showExecutiveDashboard && (
+        <div className="space-y-8 animate-fadeIn">
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              { label: 'Total Registrations', val: stats.totalRegistrations || 0, icon: Users },
+              { label: 'Checked In', val: stats.totalCheckedIn || 0, icon: UserCheck },
+              { label: 'Venue Turnout', val: `${stats.totalRegistrations > 0 ? Math.round(((stats.totalCheckedIn || 0) / stats.totalRegistrations) * 100) : 0}%`, icon: TrendingUp },
+              { label: 'Live Data Link', val: stats.lastSyncedAt ? 'SYNCED' : 'LIVE', icon: Activity }
+            ].map((stat, i) => (
+              <div key={i} className="premium-card p-6 flex flex-col justify-between h-32 border-slate-200/60 shadow-md bg-white/50 backdrop-blur-md">
+                <div className="flex items-center justify-between">
+                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{stat.label}</span>
+                   <stat.icon className="w-4 h-4 text-slate-300" />
                 </div>
-                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-sage-deep transition-all duration-1000" style={{ width: `${pct}%` }} />
-                </div>
-                <p className="text-[10px] font-bold text-slate-400">{pct}% Capacity</p>
+                <p className="text-3xl font-black text-slate-900 tracking-tighter">{stat.val}</p>
               </div>
-            );
-          })}
+            ))}
+          </div>
+
+          {/* Turnout Bar */}
+          <div className="premium-card p-8 border-slate-200/60 shadow-lg bg-white/80">
+            <div className="flex items-center gap-2 mb-8">
+              <Sparkles className="w-5 h-5 text-amber-500" />
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest text-shadow-sm">3-Day Attendance Distribution</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+              {FESTIVAL_DAYS.map((fest) => {
+                const count = stats.dayCheckins?.[fest.id] || 0;
+                const pct = stats.totalRegistrations > 0 ? Math.round((count / stats.totalRegistrations) * 100) : 0;
+                return (
+                  <div key={fest.id} className="space-y-3">
+                    <div className="flex items-end justify-between">
+                      <span className="text-xs font-black text-slate-900 uppercase">{fest.label}</span>
+                      <span className="text-xs font-mono font-black text-sage-deep">{count}</span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-sage-deep transition-all duration-1000" style={{ width: `${pct}%` }} />
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-400">{pct}% Capacity</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Directory Section */}
       <div className="premium-card">
@@ -332,6 +410,12 @@ export default function AdminCommandConsole({ onNavigate }) {
            <div className="flex items-center gap-3">
               <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-slate-50 border-none rounded-xl text-xs font-black uppercase tracking-widest py-3 px-4 focus:ring-2 focus:ring-sage-deep/10">
                 <option value="ALL">All Roles</option>
+                <option value="attendee">Attendee</option>
+                <option value="gatekeeper">Staff</option>
+                <option value="executive_admin">Admin</option>
+              </select>
+              <select value={tierFilter} onChange={e => setTierFilter(e.target.value)} className="bg-slate-50 border-none rounded-xl text-xs font-black uppercase tracking-widest py-3 px-4 focus:ring-2 focus:ring-sage-deep/10">
+                <option value="ALL">All Tiers</option>
                 {Object.keys(ACCOUNT_TYPES).map(k => <option key={k} value={k}>{ACCOUNT_TYPES[k].label}</option>)}
               </select>
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="bg-slate-50 border-none rounded-xl text-xs font-black uppercase tracking-widest py-3 px-4 focus:ring-2 focus:ring-sage-deep/10">
