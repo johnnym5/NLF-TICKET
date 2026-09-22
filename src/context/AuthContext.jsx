@@ -80,19 +80,30 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
       if (user) {
         try {
-          // Derive role from email for Spark plan compatibility
-          let role = 'attendee';
-          if (user.email === 'admin@gcc.com') role = 'executive_admin';
-          else if (user.email?.startsWith('qrscanner')) role = 'gatekeeper';
-          setUserRole(role);
-
           const docRef = doc(db, 'attendees', user.uid);
           unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
               const data = docSnap.data();
               setAttendeeRecord(data);
+
+              // Set role from Firestore, fallback to email-based derivation
+              if (data.role) {
+                setUserRole(data.role);
+              } else {
+                let derivedRole = 'attendee';
+                if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
+                else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
+                setUserRole(derivedRole);
+              }
+
               localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(data));
             } else {
+              // Derive role from email if no doc yet
+              let derivedRole = 'attendee';
+              if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
+              else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
+              setUserRole(derivedRole);
+
               const cached = localStorage.getItem(`gcc_attendee_${user.uid}`);
               if (cached) {
                 setAttendeeRecord(JSON.parse(cached));
@@ -134,12 +145,18 @@ export function AuthProvider({ children }) {
 
         let tier = 'REGULAR';
         if (invitationId) {
-            // Note: On Spark plan without functions, we can't securely verify invitation usage counts server-side
-            // without exposing the invitations collection. For now, we assume valid if present.
             const invRef = doc(db, 'vipInvitations', invitationId);
             const invSnap = await getDoc(invRef);
             if (invSnap.exists()) {
-                tier = invSnap.data().tier || 'REGULAR';
+                const invData = invSnap.data();
+                const now = new Date();
+                const expiresAt = invData.expiresAt?.seconds ? new Date(invData.expiresAt.seconds * 1000) : new Date(invData.expiresAt);
+
+                if (expiresAt > now && !invData.isUsed) {
+                    tier = invData.tier || 'REGULAR';
+                    // Mark as used if we want one-time links
+                    await updateDoc(invRef, { isUsed: true, usedBy: user.uid });
+                }
             }
         }
 

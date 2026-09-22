@@ -4,10 +4,10 @@ export const FESTIVAL_EXPERIENCES = [
     title: 'Livestock Showcase',
     shortDesc: 'Experience a grand parade of the nation\'s finest livestock including cows, goats, camels, and pedigree dogs.',
     icon: 'Trophy',
-    coverImage: 'https://images.unsplash.com/photo-1570042707222-63b7e7323136?auto=format&fit=crop&w=1200&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1547920190-28198f244511?auto=format&fit=crop&w=1200&q=80',
     gallery: [
-      'https://images.unsplash.com/photo-1546445317-29f4545f9d52?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1500595046743-cd271d694d30?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1546445317-29f4545e9d53?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1516467508483-a7212febe31a?auto=format&fit=crop&w=800&q=80'
     ],
     details: {
       highlights: [
@@ -26,9 +26,9 @@ export const FESTIVAL_EXPERIENCES = [
     title: 'Cuisine Pavilion',
     shortDesc: 'Indulge in an explosion of traditional flavors featuring authentic Suya, grilled meats, and local milk delicacies.',
     icon: 'Utensils',
-    coverImage: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1200&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1200&q=80',
     gallery: [
-      'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?auto=format&fit=crop&w=800&q=80'
     ],
     details: {
@@ -48,9 +48,9 @@ export const FESTIVAL_EXPERIENCES = [
     title: 'Cultural Gala',
     shortDesc: 'Enjoy three days of non-stop music, traditional dances, and vibrant pastoral heritage celebrations.',
     icon: 'Music',
-    coverImage: 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?auto=format&fit=crop&w=1200&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=1200&q=80',
     gallery: [
-      'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80'
     ],
     details: {

@@ -92,7 +92,10 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
           </div>
 
           {isVip && (
-            <Badge variant="gold" className="mb-4">👑 {tierName} Invitation Active</Badge>
+            <Badge variant="gold" className="mb-4 flex items-center gap-1.5">
+              <ShieldCheck className="w-3 h-3" />
+              <span>{tierName} Invitation Active</span>
+            </Badge>
           )}
 
           <h2 className="text-2xl font-black text-slate-900 mb-1">

@@ -6,6 +6,9 @@ import DigitalPassView from './views/DigitalPassView';
 import GatekeeperScanner from './views/GatekeeperScanner';
 import AdminCommandConsole from './views/AdminCommandConsole';
 import DiagnosticsConsole from './views/DiagnosticsConsole';
+import PrivacyView from './views/PrivacyView';
+import RegistryView from './views/RegistryView';
+import ComplianceView from './views/ComplianceView';
 import AuthModal from './components/AuthModal';
 
 function AppContent() {
@@ -23,6 +26,9 @@ function AppContent() {
     else if (route === 'gatekeeper') path = '/qrscanner';
     else if (route === 'admin') path = '/admin';
     else if (route === 'diagnostics') path = '/diagnostics';
+    else if (route === 'privacy') path = '/privacy';
+    else if (route === 'registry') path = '/registry';
+    else if (route === 'compliance') path = '/compliance';
 
     window.history.pushState({ route }, '', path);
     setCurrentRoute(route);
@@ -37,6 +43,9 @@ function AppContent() {
       else if (path === 'qrscanner') setCurrentRoute('gatekeeper');
       else if (path === 'admin') setCurrentRoute('admin');
       else if (path === 'diagnostics') setCurrentRoute('diagnostics');
+      else if (path === 'privacy') setCurrentRoute('privacy');
+      else if (path === 'registry') setCurrentRoute('registry');
+      else if (path === 'compliance') setCurrentRoute('compliance');
 
       const params = new URLSearchParams(window.location.search);
       const invite = params.get('invite');
@@ -67,13 +76,14 @@ function AppContent() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FBFBFA] relative overflow-hidden">
-      {/* Refined subtle background movement */}
-      <div className="fixed inset-0 pointer-events-none z-0">
+      {/* High-Fidelity Atmospheric Background Layer */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div 
-          className="absolute inset-0 bg-cover bg-center animate-slow-3d-bg opacity-[0.03] grayscale contrast-125"
+          className="absolute -inset-[20%] w-[140%] h-[140%] bg-cover bg-center animate-pan-zoom-blur opacity-30 grayscale-[20%] blur-[80px]"
           style={{ backgroundImage: `url('/festival-bg.jpg')` }}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-white via-[#FBFBFA] to-slate-50" />
+        {/* Subtle color wash to maintain legibility */}
+        <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-transparent to-slate-50/40" />
       </div>
 
       <div className="relative z-10 flex flex-col min-h-screen">
@@ -103,33 +113,57 @@ function AppContent() {
           {currentRoute === 'diagnostics' && (
             <DiagnosticsConsole />
           )}
+
+          {currentRoute === 'privacy' && (
+            <PrivacyView />
+          )}
+
+          {currentRoute === 'registry' && (
+            <RegistryView />
+          )}
+
+          {currentRoute === 'compliance' && (
+            <ComplianceView />
+          )}
         </main>
 
-        <footer className="bg-white border-t border-slate-200 py-12">
+        <footer className="bg-white border-t border-slate-200 py-4 sm:py-6">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-white text-[10px] font-black tracking-widest uppercase">NLF</div>
-                  <span className="font-black text-slate-900 uppercase tracking-tighter">National Livestock Festival 2026</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-slate-900 flex items-center justify-center text-white text-[8px] font-black tracking-widest uppercase">NLF</div>
+                  <span className="font-black text-slate-900 uppercase tracking-tighter text-[10px]">National Livestock Festival 2026</span>
                 </div>
-                <p className="text-xs text-slate-500 font-medium max-w-sm leading-relaxed uppercase tracking-widest">
+                <p className="text-[9px] text-slate-500 font-medium max-w-sm leading-tight uppercase tracking-wider">
                   Operating in association with the Federal Government of Nigeria and Golden Camel and Cow (GCC).
                 </p>
               </div>
-              <div className="flex flex-col md:items-end justify-center space-y-2">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Primary Venue</p>
-                <p className="text-sm font-black text-slate-900 uppercase tracking-tight">Old Parade Ground, Abuja, FCT</p>
+              <div className="flex flex-col md:items-end justify-center">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Primary Venue</p>
+                <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight">Old Parade Ground, Abuja, FCT</p>
               </div>
             </div>
 
-            <div className="pt-8 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-6">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                © 2026 NLF Steering Committee. Final Release v2.0
+            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                © 2026 NLF Steering Committee. v2.0
               </p>
-              <div className="flex items-center gap-6">
-                 {['Privacy', 'Registry', 'Compliance'].map(item => (
-                   <button key={item} className="text-[10px] font-black text-slate-400 hover:text-slate-900 uppercase tracking-widest transition-colors">{item}</button>
+              <div className="flex items-center gap-4">
+                 {[
+                   { id: 'privacy', label: 'Privacy' },
+                   { id: 'registry', label: 'Registry' },
+                   { id: 'compliance', label: 'Compliance' }
+                 ].map(item => (
+                   <button
+                     key={item.id}
+                     onClick={() => navigateTo(item.id)}
+                     className={`text-[8px] font-black uppercase tracking-widest transition-colors ${
+                       currentRoute === item.id ? 'text-slate-900' : 'text-slate-400 hover:text-slate-900'
+                     }`}
+                   >
+                     {item.label}
+                   </button>
                  ))}
               </div>
             </div>

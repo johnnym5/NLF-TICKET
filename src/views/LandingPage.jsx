@@ -17,16 +17,29 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import { FESTIVAL_EXPERIENCES } from '../data/experienceData';
 import ExperienceDetailModal from '../components/ExperienceDetailModal';
+import FestivalInfoModal from '../components/FestivalInfoModal';
 
 export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
   const { currentUser } = useAuth();
   const [selectedExperience, setSelectedExperience] = useState(null);
+  const [infoModalOpen, setInfoModalOpen] = useState(false);
   const isVip = vipTier && vipTier !== 'REGULAR';
   const tierName = TIER_LABELS[vipTier] || 'General Entry';
   const wristbandColor = TIER_WRISTBANDS[vipTier] || TIER_WRISTBANDS.REGULAR;
 
   return (
     <div className="pb-24">
+      {/* Festival Info Trigger (Floating Pill) */}
+      <div className="flex justify-center pt-8 sm:pt-12">
+        <button
+          onClick={() => setInfoModalOpen(true)}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#EBF3EE] border border-[#B8D8C5] text-[#0F4A2F] text-xs font-black uppercase tracking-widest shadow-sm hover:shadow-md hover:bg-[#D8EADF] transition-all active:scale-95"
+        >
+          <Info className="w-4 h-4" />
+          <span>Festival Info</span>
+        </button>
+      </div>
+
       {/* VIP Invitation Header */}
       {isVip && (
         <ScrollReveal delay={50} direction="down">
@@ -72,7 +85,7 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
           <ScrollReveal delay={300}>
             <div className="max-w-2xl mx-auto mb-12">
               <p className="text-base sm:text-lg text-slate-500 font-medium leading-relaxed italic">
-                “Everything camel, everything healthy.” — Celebrating Nigeria's vibrant pastoral heritage and the future of livestock excellence.
+                “Everything camel, everything healthy.”: Celebrating Nigeria's vibrant pastoral heritage and the future of livestock excellence.
               </p>
             </div>
           </ScrollReveal>
@@ -114,7 +127,10 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
             <ScrollReveal delay={900}>
               <div className="flex flex-col items-center gap-1">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Admission</span>
-                <Badge variant="success" className="py-1 px-4">100% Free Entry</Badge>
+                <div className="flex items-center gap-2 text-emerald-600 font-bold">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>100% Free Entry</span>
+                </div>
               </div>
             </ScrollReveal>
           </div>
@@ -169,6 +185,13 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
         experience={selectedExperience}
         isOpen={!!selectedExperience}
         onClose={() => setSelectedExperience(null)}
+      />
+
+      {/* Festival Info Modal */}
+      <FestivalInfoModal
+        isOpen={infoModalOpen}
+        onClose={() => setInfoModalOpen(false)}
+        onRegister={onClaimPass}
       />
 
       {/* Official Footnote */}
