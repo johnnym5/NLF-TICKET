@@ -78,7 +78,7 @@ exports.registerAttendee = functions.https.onCall(async (data, context) => {
 
   const uid = context.auth.uid;
   const email = context.auth.token.email;
-  const fullName = data.fullName || context.auth.token.name || 'Distinguished Guest';
+  const fullName = data.fullName || context.auth.token.name || 'Attendee';
   const invitationId = data.invitationId;
 
   const attendeeRef = db.collection('attendees').doc(uid);

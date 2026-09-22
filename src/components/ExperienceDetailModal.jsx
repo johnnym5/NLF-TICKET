@@ -85,7 +85,7 @@ export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
                   activeImage === img ? 'border-sage-base scale-110 shadow-lg' : 'border-white/40 hover:border-white'
                 }`}
               >
-                <img src={img} alt="Thumbnail" className="w-full h-full object-cover" loading="lazy" />
+                <img src={img} alt={`${experience.title} Gallery ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
               </button>
             ))}
           </div>

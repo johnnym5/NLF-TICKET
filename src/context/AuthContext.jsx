@@ -148,7 +148,7 @@ export function AuthProvider({ children }) {
 
         const newRecord = {
           uid: user.uid,
-          fullName: fullName || user.displayName || 'Distinguished Guest',
+          fullName: fullName || user.displayName || 'Attendee',
           email: user.email,
           ticketCode,
           tier,

@@ -58,8 +58,8 @@ export default function DigitalPassView({ onOpenAuth }) {
   }
 
   const record = attendeeRecord || {
-    fullName: currentUser?.displayName || 'Guest Delegate',
-    email: currentUser?.email || 'attendee@carnival.ng',
+    fullName: currentUser?.displayName || 'Attendee',
+    email: currentUser?.email || '',
     ticketCode: 'GCC-2026-PENDING',
     tier: 'REGULAR',
     status: 'REGISTERED',

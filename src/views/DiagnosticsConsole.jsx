@@ -22,9 +22,7 @@ import {
 
 export default function DiagnosticsConsole() {
   const { currentUser } = useAuth();
-  const [logs, setLogs] = useState([
-    { id: 1, type: 'INFO', msg: 'Operational Terminal Initialized. Telemetry linked.', time: new Date().toLocaleTimeString([], { hour12: false }) }
-  ]);
+  const [logs, setLogs] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [metrics, setMetrics] = useState({ avgScan: 0, count: 0 });
   const [latency, setLatency] = useState(null);

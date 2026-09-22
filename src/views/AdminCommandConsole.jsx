@@ -37,7 +37,8 @@ import {
   Sparkles,
   BarChart3,
   Filter,
-  MoreHorizontal
+  MoreHorizontal,
+  ChevronDown
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -85,7 +86,11 @@ export default function AdminCommandConsole({ onNavigate }) {
     const statsRef = doc(db, 'eventStats', 'global');
     const unsubscribe = onSnapshot(statsRef, (snap) => {
       if (snap.exists()) {
-        setStats(snap.data());
+        const data = snap.data();
+        setStats(data);
+      } else {
+        // If global stats doc doesn't exist, keep at 0
+        setStats({ totalRegistrations: 0, totalCheckedIn: 0, dayCheckins: {} });
       }
     });
 

@@ -136,7 +136,7 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
             {isSignUp && (
               <Input
                 label="Full Name"
-                placeholder="Dr. Aminu Bello"
+                placeholder="Attendee Name"
                 icon={User}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
