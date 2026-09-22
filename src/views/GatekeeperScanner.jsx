@@ -115,30 +115,62 @@ export default function GatekeeperScanner() {
     setCameraError('');
     setScannedResult(null);
     try {
-      if (scannerRef.current) await scannerRef.current.stop().catch(() => {});
+      // 1. Clean up any existing instance first
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) {
+            await scannerRef.current.stop();
+          }
+        } catch (e) {
+          console.warn('Scanner stop warning during re-init:', e);
+        }
+        scannerRef.current = null;
+      }
+
+      // 2. Create new instance
       const html5Qr = new Html5Qrcode('gatekeeper-reader');
       scannerRef.current = html5Qr;
+
       await html5Qr.start(
         { facingMode: 'environment' },
-        { fps: 25, qrbox: (w, h) => { const s = Math.min(w, h) * 0.7; return { width: s, height: s }; } },
+        {
+          fps: 25,
+          qrbox: (w, h) => { const s = Math.min(w, h) * 0.7; return { width: s, height: s }; }
+        },
         (text) => processTicketCode(text)
       );
       setCameraActive(true);
     } catch (err) {
+      console.error('Scanner start error:', err);
       setCameraError('Camera unavailable or permission denied.');
       setCameraActive(false);
     }
   };
 
   const stopScanner = async () => {
-    if (scannerRef.current) await scannerRef.current.stop().catch(() => {});
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+      } catch (err) {
+        console.warn('Error stopping scanner:', err);
+      }
+    }
     setCameraActive(false);
   };
 
   useEffect(() => {
     if (isAuthenticated && !isLocked) {
       const timer = setTimeout(() => startScanner(), 500);
-      return () => { if (scannerRef.current) scannerRef.current.stop().catch(() => {}); clearTimeout(timer); };
+      return () => {
+        clearTimeout(timer);
+        if (scannerRef.current) {
+          if (scannerRef.current.isScanning) {
+            scannerRef.current.stop().catch(e => console.warn('Cleanup stop failed:', e));
+          }
+        }
+      };
     }
   }, [isAuthenticated, isLocked]);
 
