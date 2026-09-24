@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, TIER_LABELS, TIER_WRISTBANDS } from '../context/AuthContext';
-import { 
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import {
   Calendar, 
   MapPin, 
   ArrowRight,
@@ -9,7 +11,8 @@ import {
   Music,
   Utensils,
   ChevronRight,
-  Info
+  Info,
+  Ticket
 } from 'lucide-react';
 import CountdownTimer from '../components/CountdownTimer';
 import ScrollReveal from '../components/ScrollReveal';
@@ -19,18 +22,53 @@ import { FESTIVAL_EXPERIENCES } from '../data/experienceData';
 import ExperienceDetailModal from '../components/ExperienceDetailModal';
 import FestivalInfoModal from '../components/FestivalInfoModal';
 
+export function getRoundTicketCount(count) {
+  const num = Number(count) || 0;
+  if (num <= 10) return "10+";
+  if (num <= 50) return `${Math.floor(num / 10) * 10}+`;
+  if (num <= 100) return `${Math.floor(num / 10) * 10}+`;
+  if (num <= 250) return `${Math.floor(num / 50) * 50}+`;
+  if (num <= 500) return `${Math.floor(num / 50) * 50}+`;
+  if (num <= 1000) return `${Math.floor(num / 100) * 100}+`;
+  if (num <= 5000) return `${Math.floor(num / 500) * 500}+`;
+  return `${Math.floor(num / 1000) * 1000}+`;
+}
+
 export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
-  const { currentUser } = useAuth();
+  const { currentUser, attendeeRecord } = useAuth();
   const [selectedExperience, setSelectedExperience] = useState(null);
   const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [totalTickets, setTotalTickets] = useState(0);
+
+  const hasTicket = Boolean(currentUser && attendeeRecord?.ticketCode);
   const isVip = vipTier && vipTier !== 'REGULAR';
   const tierName = TIER_LABELS[vipTier] || 'General Entry';
   const wristbandColor = TIER_WRISTBANDS[vipTier] || TIER_WRISTBANDS.REGULAR;
 
+  useEffect(() => {
+    let unsubscribe = () => {};
+    try {
+      const statsRef = doc(db, 'eventStats', 'global');
+      unsubscribe = onSnapshot(statsRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.totalRegistrations !== undefined) {
+            setTotalTickets(data.totalRegistrations);
+          }
+        }
+      }, (err) => {
+        console.warn('Error fetching eventStats for landing page:', err);
+      });
+    } catch (err) {
+      console.warn('Failed to listen to eventStats:', err);
+    }
+    return () => unsubscribe();
+  }, []);
+
   return (
     <div className="pb-24">
-      {/* Festival Info Trigger (Floating Pill) */}
-      <div className="flex justify-center pt-8 sm:pt-12">
+      {/* Top Floating Action & Stats Bar */}
+      <div className="flex flex-wrap items-center justify-center gap-3 pt-8 sm:pt-12 px-4">
         <button
           onClick={() => setInfoModalOpen(true)}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#EBF3EE] border border-[#B8D8C5] text-[#0F4A2F] text-xs font-black uppercase tracking-widest shadow-sm hover:shadow-md hover:bg-[#D8EADF] transition-all active:scale-95"
@@ -38,6 +76,15 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
           <Info className="w-4 h-4" />
           <span>Festival Info</span>
         </button>
+
+        <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-950 border border-emerald-700/60 text-emerald-100 text-xs font-black uppercase tracking-wider shadow-sm">
+          <Ticket className="w-4 h-4 text-emerald-400 animate-pulse shrink-0" />
+          <span>
+            {hasTicket
+              ? `YOU AND OVER ${getRoundTicketCount(totalTickets)} OTHERS HAVE ALREADY GOTTEN THEIR TICKET`
+              : `WITH OVER ${getRoundTicketCount(totalTickets)} PEOPLE ALREADY GOTTEN THEIR TICKET`}
+          </span>
+        </div>
       </div>
 
       {/* VIP Invitation Header */}
@@ -83,9 +130,23 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
           </ScrollReveal>
 
           <ScrollReveal delay={300}>
-            <div className="max-w-2xl mx-auto mb-12">
+            <div className="max-w-2xl mx-auto mb-8">
               <p className="text-base sm:text-lg text-slate-500 font-medium leading-relaxed italic">
                 “Everything camel, everything healthy.”: Celebrating Nigeria's vibrant pastoral heritage and the future of livestock excellence.
+              </p>
+            </div>
+          </ScrollReveal>
+
+          {/* Dynamic Social Proof Ticket Badge */}
+          <ScrollReveal delay={400}>
+            <div className="inline-flex items-center gap-3 px-6 py-3 rounded-2xl bg-slate-900 text-white border border-emerald-500/30 shadow-xl mb-12 max-w-2xl mx-auto backdrop-blur-sm">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0 border border-emerald-500/30">
+                <Ticket className="w-4 h-4" />
+              </div>
+              <p className="text-xs sm:text-sm font-extrabold uppercase tracking-wide text-emerald-100 text-center sm:text-left leading-snug">
+                {hasTicket
+                  ? `YOU AND OVER ${getRoundTicketCount(totalTickets)} OTHERS HAVE ALREADY GOTTEN THEIR TICKET`
+                  : `WITH OVER ${getRoundTicketCount(totalTickets)} PEOPLE ALREADY GOTTEN THEIR TICKET`}
               </p>
             </div>
           </ScrollReveal>

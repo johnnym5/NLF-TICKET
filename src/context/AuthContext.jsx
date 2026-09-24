@@ -13,7 +13,8 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
-  serverTimestamp
+  serverTimestamp,
+  increment
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
 
