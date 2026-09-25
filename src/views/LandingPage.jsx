@@ -40,7 +40,7 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [totalTickets, setTotalTickets] = useState(0);
 
-  const hasTicket = Boolean(currentUser && attendeeRecord?.ticketCode);
+  const hasTicket = Boolean(currentUser);
   const isVip = vipTier && vipTier !== 'REGULAR';
   const tierName = TIER_LABELS[vipTier] || 'General Entry';
   const wristbandColor = TIER_WRISTBANDS[vipTier] || TIER_WRISTBANDS.REGULAR;
@@ -67,8 +67,8 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
 
   return (
     <div className="pb-24">
-      {/* Top Floating Action & Stats Bar */}
-      <div className="flex flex-wrap items-center justify-center gap-3 pt-8 sm:pt-12 px-4">
+      {/* Top Floating Festival Info Button */}
+      <div className="flex justify-center pt-8 sm:pt-12 px-4">
         <button
           onClick={() => setInfoModalOpen(true)}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#EBF3EE] border border-[#B8D8C5] text-[#0F4A2F] text-xs font-black uppercase tracking-widest shadow-sm hover:shadow-md hover:bg-[#D8EADF] transition-all active:scale-95"
@@ -76,15 +76,6 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
           <Info className="w-4 h-4" />
           <span>Festival Info</span>
         </button>
-
-        <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-950 border border-emerald-700/60 text-emerald-100 text-xs font-black uppercase tracking-wider shadow-sm">
-          <Ticket className="w-4 h-4 text-emerald-400 animate-pulse shrink-0" />
-          <span>
-            {hasTicket
-              ? `YOU AND OVER ${getRoundTicketCount(totalTickets)} OTHERS HAVE ALREADY GOTTEN THEIR TICKET`
-              : `WITH OVER ${getRoundTicketCount(totalTickets)} PEOPLE ALREADY GOTTEN THEIR TICKET`}
-          </span>
-        </div>
       </div>
 
       {/* VIP Invitation Header */}
