@@ -171,7 +171,7 @@ BEGIN
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', 'User'),
     CASE
-      WHEN NEW.email = 'admin@gcc.com' THEN 'admin'::public.user_roles
+      WHEN NEW.email IN ('admin@livestockcarnival.ng', 'admin@gcc.com') THEN 'admin'::public.user_roles
       WHEN NEW.email LIKE 'qrscanner%' THEN 'gatekeeper'::public.user_roles
       ELSE 'user'::public.user_roles
     END

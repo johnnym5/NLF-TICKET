@@ -138,7 +138,7 @@ export function AuthProvider({ children }) {
           .maybeSingle();
 
         if (!profile) {
-          const derivedRole = user.email === 'admin@gcc.com' ? 'admin' :
+          const derivedRole = (user.email === 'admin@livestockcarnival.ng' || user.email === 'admin@gcc.com') ? 'admin' :
                             user.email?.startsWith('qrscanner') ? 'gatekeeper' : 'user';
 
           const { data: newProfile } = await supabase

@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
-import { useAuth, TIER_LABELS, TIER_WRISTBANDS } from '../context/AuthContext';
+import { useAuth, TIER_LABELS, TIER_WRISTBANDS, VIP_PLUS_ONES } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { 
   ShieldCheck, 
   Clock, 
@@ -12,7 +13,11 @@ import {
   CheckCircle2, 
   AlertCircle,
   Info,
-  Printer
+  Printer,
+  Users,
+  ChevronLeft,
+  ChevronRight,
+  Crown
 } from 'lucide-react';
 import ViralReferralDrawer from '../components/ViralReferralDrawer';
 import ScrollReveal from '../components/ScrollReveal';
@@ -20,8 +25,10 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 
 export default function DigitalPassView({ onOpenAuth }) {
-  const { currentUser, attendeeRecord, isNewRegistration, setIsNewRegistration } = useAuth();
+  const { currentUser, userTicket, userProfile, attendeeRecord, isNewRegistration, setIsNewRegistration } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [guestTickets, setGuestTickets] = useState([]);
+  const [selectedPassIndex, setSelectedPassIndex] = useState(0); // 0 = Primary Pass, 1..N = Guest Passes
   const passRef = useRef(null);
 
   useEffect(() => {
@@ -40,7 +47,26 @@ export default function DigitalPassView({ onOpenAuth }) {
     }
   }, [isNewRegistration, setIsNewRegistration]);
 
-  if (!currentUser && !attendeeRecord) {
+  // Fetch linked guest passes if primary ticket is VIP
+  useEffect(() => {
+    if (!userTicket?.id) return;
+
+    const fetchGuestPasses = async () => {
+      const { data } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('parent_ticket_id', userTicket.id)
+        .order('created_at', { ascending: true });
+
+      if (data) {
+        setGuestTickets(data);
+      }
+    };
+
+    fetchGuestPasses();
+  }, [userTicket]);
+
+  if (!currentUser && !attendeeRecord && !userTicket) {
     return (
       <div className="max-w-md mx-auto my-16 p-12 bg-white rounded-2xl border border-slate-200 text-center shadow-soft">
         <div className="w-16 h-16 rounded-2xl bg-sage-light text-sage-deep mx-auto flex items-center justify-center mb-6">
@@ -57,17 +83,30 @@ export default function DigitalPassView({ onOpenAuth }) {
     );
   }
 
-  const record = attendeeRecord || {
-    fullName: currentUser?.displayName || 'Attendee',
-    email: currentUser?.email || '',
-    ticketCode: 'GCC-2026-PENDING',
-    tier: 'REGULAR',
-    status: 'REGISTERED',
-  };
+  // Combine primary ticket and guest tickets for VIP pass slider
+  const allPasses = [
+    {
+      type: 'PRIMARY',
+      fullName: userProfile?.full_name || currentUser?.displayName || 'Attendee',
+      email: userProfile?.email || currentUser?.email || '',
+      ticketCode: userTicket?.ticket_code || attendeeRecord?.ticketCode || 'GCC-2026-PENDING',
+      tier: userTicket?.tier || attendeeRecord?.tier || 'general',
+      status: userTicket?.status || (attendeeRecord?.status === 'CHECKED_IN' ? 'used' : 'valid')
+    },
+    ...guestTickets.map((g, idx) => ({
+      type: 'GUEST',
+      fullName: `${userProfile?.full_name || 'VIP'} Guest #${idx + 1}`,
+      email: `Guest Pass #${idx + 1}`,
+      ticketCode: g.ticket_code,
+      tier: g.tier,
+      status: g.status
+    }))
+  ];
 
-  const isCheckedIn = record.status === 'CHECKED_IN';
-  const tierName = TIER_LABELS[record.tier] || 'General Entry';
-  const wristband = record.wristbandColor || TIER_WRISTBANDS[record.tier] || 'Emerald Green';
+  const activePass = allPasses[selectedPassIndex] || allPasses[0];
+  const isCheckedIn = activePass.status === 'used' || activePass.status === 'CHECKED_IN';
+  const tierName = TIER_LABELS[activePass.tier] || 'General Admission Pass';
+  const wristband = TIER_WRISTBANDS[activePass.tier] || 'Emerald Green';
 
   const handlePrint = () => window.print();
 
@@ -78,6 +117,35 @@ export default function DigitalPassView({ onOpenAuth }) {
           <span className="section-label">Attendee Credential</span>
         </div>
       </ScrollReveal>
+
+      {/* VIP Guest Pass Selector Tabs */}
+      {allPasses.length > 1 && (
+        <div className="mb-6 p-2 bg-slate-900 text-white rounded-2xl flex items-center justify-between gap-2 shadow-lg">
+          <button
+            onClick={() => setSelectedPassIndex(p => Math.max(0, p - 1))}
+            disabled={selectedPassIndex === 0}
+            className="p-2 text-slate-400 hover:text-white disabled:opacity-20"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-1 text-xs font-black uppercase text-amber-400">
+              <Crown className="w-3.5 h-3.5" />
+              <span>{activePass.type === 'PRIMARY' ? 'Primary VIP Pass' : `VIP Guest Pass #${selectedPassIndex}`}</span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-medium">Pass {selectedPassIndex + 1} of {allPasses.length}</p>
+          </div>
+
+          <button
+            onClick={() => setSelectedPassIndex(p => Math.min(allPasses.length - 1, p + 1))}
+            disabled={selectedPassIndex === allPasses.length - 1}
+            className="p-2 text-slate-400 hover:text-white disabled:opacity-20"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       {/* Main Official Pass Card */}
       <ScrollReveal delay={200}>
@@ -113,12 +181,12 @@ export default function DigitalPassView({ onOpenAuth }) {
           {/* Identity Section */}
           <div className="px-8 pt-8 pb-6 text-center border-b border-slate-100 bg-slate-50/50">
             <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mb-1">
-              {record.fullName}
+              {activePass.fullName}
             </h2>
-            <p className="text-xs text-slate-500 font-bold mb-4 uppercase tracking-widest">{record.email}</p>
+            <p className="text-xs text-slate-500 font-bold mb-4 uppercase tracking-widest">{activePass.email}</p>
 
             <div className="inline-block px-4 py-1.5 rounded-lg bg-white border border-slate-200 font-mono text-xs font-black text-slate-800 shadow-sm">
-              {record.ticketCode}
+              {activePass.ticketCode}
             </div>
           </div>
 
@@ -126,7 +194,7 @@ export default function DigitalPassView({ onOpenAuth }) {
           <div className="px-8 py-10 flex flex-col items-center justify-center bg-white relative">
             <div className="p-4 bg-white rounded-2xl border-2 border-slate-100 shadow-soft">
               <QRCodeSVG 
-                value={record.signedPayload || record.ticketCode}
+                value={activePass.ticketCode}
                 size={200}
                 level="H"
                 includeMargin={false}
@@ -141,9 +209,9 @@ export default function DigitalPassView({ onOpenAuth }) {
           <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entry Status</span>
             {isCheckedIn ? (
-              <Badge variant="success" className="animate-pulse px-3 py-1">Checked In</Badge>
+              <Badge variant="success" className="animate-pulse px-3 py-1">Checked In (Used)</Badge>
             ) : (
-              <Badge variant="pending" className="px-3 py-1">Registered</Badge>
+              <Badge variant="pending" className="px-3 py-1">Valid Pass</Badge>
             )}
           </div>
 
@@ -154,11 +222,6 @@ export default function DigitalPassView({ onOpenAuth }) {
                 <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Wristband Allocation</span>
              </div>
              <p className="text-sm font-black text-slate-900 uppercase tracking-tight">{wristband}</p>
-             {isCheckedIn && record.checkedInAt && (
-                <p className="mt-3 text-[10px] font-bold text-emerald-700">
-                  Verified at {record.checkedInAt} by {record.checkedInBy || 'Gate Steward'}
-                </p>
-             )}
           </div>
 
           {/* Security Footer */}
@@ -192,7 +255,7 @@ export default function DigitalPassView({ onOpenAuth }) {
       <ViralReferralDrawer
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        ticketCode={record.ticketCode}
+        ticketCode={activePass.ticketCode}
       />
     </div>
   );

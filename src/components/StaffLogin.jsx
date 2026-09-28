@@ -38,7 +38,7 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
         return user.email === pattern;
       });
 
-      if (isStaffRole || isAllowedEmail || user.email === 'admin@gcc.com') {
+      if (isStaffRole || isAllowedEmail || user.email === 'admin@livestockcarnival.ng' || user.email === 'admin@gcc.com') {
         if (onSuccess) onSuccess(user);
       } else {
         setError('Unauthorized Access Denied. Staff credentials required.');

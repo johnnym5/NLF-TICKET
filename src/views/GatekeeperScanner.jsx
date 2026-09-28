@@ -69,7 +69,7 @@ export default function GatekeeperScanner() {
   const processingRef = useRef(false);
 
   useEffect(() => {
-    const isAdmin = userRole === 'admin' || currentUser?.email === 'admin@gcc.com';
+    const isAdmin = userRole === 'admin' || userRole === 'executive_admin' || currentUser?.email === 'admin@livestockcarnival.ng' || currentUser?.email === 'admin@gcc.com';
     const isGate = userRole === 'gatekeeper' || userRole === 'security' || currentUser?.email?.startsWith('qrscanner');
     setIsAuthenticated(isAdmin || isGate);
   }, [userRole, currentUser]);

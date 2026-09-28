@@ -183,7 +183,7 @@ function AppContent() {
         onSuccess={(user) => {
           // The user object is passed back from AuthModal after successful login/signup
           const email = user?.email || '';
-          if (email === 'admin@gcc.com') {
+          if (email === 'admin@livestockcarnival.ng' || email === 'admin@gcc.com') {
             navigateTo('admin');
           } else if (email.startsWith('qrscanner')) {
             navigateTo('gatekeeper');

@@ -137,7 +137,12 @@ export default function AdminCommandConsole({ onNavigate }) {
   };
 
   useEffect(() => {
-    setIsAuthenticated(userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com');
+    setIsAuthenticated(
+      userRole === 'admin' ||
+      userRole === 'executive_admin' ||
+      currentUser?.email === 'admin@livestockcarnival.ng' ||
+      currentUser?.email === 'admin@gcc.com'
+    );
   }, [userRole, currentUser]);
 
   // Real-time synchronization via Supabase Postgres Changes
