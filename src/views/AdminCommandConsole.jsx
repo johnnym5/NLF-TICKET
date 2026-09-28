@@ -43,7 +43,9 @@ import {
   Palette,
   Sparkles,
   FolderPlus,
-  Tag
+  Tag,
+  UserPlus2,
+  SlidersHorizontal
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -123,8 +125,17 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [newGateName, setNewGateName] = useState('');
   const [newGateDesc, setNewGateDesc] = useState('');
 
-  // Custom Role Modal State
-  const [showRoleModal, setShowRoleModal] = useState(false);
+  // Unified ADD USER Modal State
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [addUserModalTab, setAddUserModalTab] = useState('DETAILS'); // 'DETAILS' (manual entry) or 'TYPE' (new role/group)
+
+  // Manual User Entry Form State
+  const [manualUserFullName, setManualUserFullName] = useState('');
+  const [manualUserEmail, setManualUserEmail] = useState('');
+  const [manualUserRole, setManualUserRole] = useState('attendee');
+  const [manualUserGate, setManualUserGate] = useState('');
+
+  // Custom Group/Role Form State
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleCategory, setNewRoleCategory] = useState('staff'); // 'staff' or 'attendee'
   const [newRoleColorName, setNewRoleColorName] = useState('Cobalt Blue');
@@ -231,6 +242,71 @@ export default function AdminCommandConsole({ onNavigate }) {
     };
   }, [isAuthenticated]);
 
+  const handleCreateManualUser = async (e) => {
+    e.preventDefault();
+    if (!manualUserEmail.trim()) return;
+
+    try {
+      const email = manualUserEmail.trim().toLowerCase();
+      const fullName = manualUserFullName.trim() || email.split('@')[0];
+      const role = manualUserRole.toLowerCase();
+
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('email', email)
+        .maybeSingle();
+
+      let profileId = existingProfile?.id;
+
+      if (!existingProfile) {
+        profileId = crypto.randomUUID ? crypto.randomUUID() : 'manual-' + Math.random().toString(36).substring(2);
+        const { data: newProfile, error: profileErr } = await supabase
+          .from('profiles')
+          .insert({
+            id: profileId,
+            email: email,
+            full_name: fullName,
+            role: role,
+            assigned_gate_id: manualUserGate || null
+          })
+          .select('*')
+          .single();
+
+        if (profileErr) throw profileErr;
+        setProfiles(prev => [newProfile, ...prev]);
+      } else {
+        await supabase
+          .from('profiles')
+          .update({ role: role, assigned_gate_id: manualUserGate || null })
+          .eq('id', profileId);
+
+        setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, role, assigned_gate_id: manualUserGate || null } : p));
+      }
+
+      // Auto-issue ticket if role belongs to attendee category
+      const roleObj = customRoles.find(r => r.name.toLowerCase() === role.toLowerCase());
+      if (roleObj?.category === 'attendee' || role === 'attendee' || role === 'vendors' || role === 'exhibitors') {
+        const ticketCode = generateTicketCode('general');
+        await supabase.from('tickets').insert({
+          ticket_code: ticketCode,
+          owner_id: profileId,
+          tier: 'general',
+          is_manual: true,
+          created_by: currentUser?.id,
+          status: 'valid'
+        });
+      }
+
+      setManualUserFullName('');
+      setManualUserEmail('');
+      setShowAddUserModal(false);
+      alert(`User ${fullName} added as ${role.toUpperCase()}!`);
+    } catch (err) {
+      alert('Failed to add user: ' + err.message);
+    }
+  };
+
   const handleCreateCustomRole = async (e) => {
     e.preventDefault();
     if (!newRoleName.trim()) return;
@@ -264,9 +340,20 @@ export default function AdminCommandConsole({ onNavigate }) {
       }
 
       setNewRoleName('');
-      setShowRoleModal(false);
+      setShowAddUserModal(false);
+      alert(`Role group "${trimmedName}" created and added to dropdowns!`);
     } catch (err) {
       alert('Failed to create role: ' + err.message);
+    }
+  };
+
+  const handleDeleteProfile = async (profileId) => {
+    if (!window.confirm('Remove this user profile?')) return;
+    try {
+      await supabase.from('profiles').delete().eq('id', profileId);
+      setProfiles(prev => prev.filter(p => p.id !== profileId));
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -495,6 +582,18 @@ export default function AdminCommandConsole({ onNavigate }) {
     return ['admin', 'gatekeeper', 'security', 'team_member', 'director', 'tech support', 'creatives', ...list];
   }, [customRoles]);
 
+  const isStaffRole = (roleName) => {
+    if (!roleName) return false;
+    return staffRoleNames.includes(roleName.toLowerCase());
+  };
+
+  const getRoleWristbandObj = (roleName) => {
+    if (!roleName) return { name: 'Emerald Green', hex: '#0F4A2F' };
+    const found = customRoles.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+    if (found) return { name: found.wristband_color || 'Emerald Green', hex: found.wristband_hex || '#0F4A2F' };
+    return { name: 'Emerald Green', hex: '#0F4A2F' };
+  };
+
   const gatekeeperAudit = useMemo(() => {
     const staffProfiles = profiles.filter(p => staffRoleNames.includes((p.role || '').toLowerCase()));
 
@@ -599,8 +698,8 @@ export default function AdminCommandConsole({ onNavigate }) {
             </div>
           </div>
 
-          <Button icon={Plus} onClick={() => setShowRoleModal(true)}>
-            Add Custom Role / Group
+          <Button icon={UserPlus2} onClick={() => { setShowAddUserModal(true); setAddUserModalTab('DETAILS'); }}>
+            ADD USER
           </Button>
         </div>
 
@@ -970,10 +1069,14 @@ export default function AdminCommandConsole({ onNavigate }) {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
               <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Assign dynamic custom roles under Staff/Operations or Attendee/Guests</p>
+              <p className="text-[10px] text-slate-500 font-medium">Promote users to Staff/Admin/Team or downgrade Staff to Attendee/User</p>
             </div>
 
             <div className="flex items-center gap-2">
+              <Button size="sm" icon={UserPlus2} onClick={() => { setShowAddUserModal(true); setAddUserModalTab('DETAILS'); }}>
+                ADD USER
+              </Button>
+
               {[
                 { id: 'STAFF', label: 'Staff & Operations' },
                 { id: 'ATTENDEE', label: 'Attendees & Guests' },
@@ -996,16 +1099,20 @@ export default function AdminCommandConsole({ onNavigate }) {
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                 <th className="p-4">Personnel</th>
                 <th className="p-4">Status & Telemetry</th>
-                <th className="p-4">Assigned Role/Group</th>
-                <th className="p-4">Assigned Gate</th>
+                <th className="p-4">Assigned Role / Group</th>
+                <th className="p-4">Gate / Access Tier</th>
+                <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {filteredProfiles.length === 0 ? (
-                <tr><td colSpan="4" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
+                <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
               ) : (
                 filteredProfiles.map(p => {
                   const online = isUserOnline(p.last_seen_at);
+                  const isStaff = isStaffRole(p.role);
+                  const wristband = getRoleWristbandObj(p.role);
+
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="p-4">
@@ -1045,14 +1152,32 @@ export default function AdminCommandConsole({ onNavigate }) {
                         </select>
                       </td>
                       <td className="p-4">
-                        <select
-                          value={p.assigned_gate_id || ''}
-                          onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
-                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer shadow-xs"
+                        {isStaff ? (
+                          <select
+                            value={p.assigned_gate_id || ''}
+                            onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
+                            className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer shadow-xs"
+                          >
+                            <option value="">Unassigned Gate</option>
+                            {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                          </select>
+                        ) : (
+                          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl w-fit">
+                            <span className="w-2.5 h-2.5 rounded-full border border-slate-300" style={{ backgroundColor: wristband.hex }} />
+                            <span className="font-extrabold uppercase text-slate-700 text-[10px]">
+                              {wristband.name}
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-4 text-right">
+                        <button
+                          onClick={() => handleDeleteProfile(p.id)}
+                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                          title="Delete User Profile"
                         >
-                          <option value="">Unassigned</option>
-                          {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                        </select>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1111,55 +1236,141 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       )}
 
-      {/* Add Custom Role / Group Modal */}
-      {showRoleModal && (
+      {/* UNIFIED "ADD USER" MODAL (Manual Details OR New Group Type) */}
+      {showAddUserModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4">
-            <h3 className="text-sm font-black uppercase text-slate-900">Add New Role / Group</h3>
-            <form onSubmit={handleCreateCustomRole} className="space-y-4">
-              <Input
-                label="Role / Group Name"
-                placeholder="e.g. Director, Tech Support, Creatives, Vendors, Exhibitors"
-                required
-                value={newRoleName}
-                onChange={e => setNewRoleName(e.target.value)}
-              />
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full space-y-5 animate-fadeIn">
+            <div className="flex items-center justify-between border-b pb-4">
+              <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-2">
+                <UserPlus2 className="w-4 h-4 text-[#0F4A2F]" />
+                User & Group Provisioning
+              </h3>
 
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Role Category</label>
-                <select
-                  value={newRoleCategory}
-                  onChange={(e) => setNewRoleCategory(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase cursor-pointer"
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setAddUserModalTab('DETAILS')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${addUserModalTab === 'DETAILS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
                 >
-                  <option value="staff">Staff & Operations (Director, Tech Support, Creatives, Security)</option>
-                  <option value="attendee">Attendees & Guests (Vendors, Exhibitors, Sponsors, Press)</option>
-                </select>
+                  New User Details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddUserModalTab('TYPE')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${addUserModalTab === 'TYPE' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                >
+                  New Group / Type
+                </button>
               </div>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
+            {/* TAB A: MANUAL NEW USER ENTRY */}
+            {addUserModalTab === 'DETAILS' && (
+              <form onSubmit={handleCreateManualUser} className="space-y-4">
                 <Input
-                  label="Wristband Color Name"
-                  placeholder="e.g. Cobalt Blue"
-                  value={newRoleColorName}
-                  onChange={e => setNewRoleColorName(e.target.value)}
+                  label="Full Name"
+                  placeholder="e.g. John Mary"
+                  value={manualUserFullName}
+                  onChange={e => setManualUserFullName(e.target.value)}
                 />
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
-                  <input
-                    type="color"
-                    value={newRoleColorHex}
-                    onChange={e => setNewRoleColorHex(e.target.value)}
-                    className="w-full h-10 rounded-xl cursor-pointer border p-0.5"
-                  />
-                </div>
-              </div>
+                <Input
+                  label="Email Address"
+                  type="email"
+                  placeholder="e.g. john@livestockcarnival.ng"
+                  required
+                  value={manualUserEmail}
+                  onChange={e => setManualUserEmail(e.target.value)}
+                />
 
-              <div className="flex gap-2 pt-2">
-                <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowRoleModal(false)}>Cancel</Button>
-                <Button type="submit" className="flex-1">Create Role / Group</Button>
-              </div>
-            </form>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Assigned Role / Group</label>
+                  <select
+                    value={manualUserRole}
+                    onChange={(e) => setManualUserRole(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase cursor-pointer"
+                  >
+                    <optgroup label="STAFF & OPERATIONS GROUPS">
+                      {customRoles.filter(r => r.category === 'staff').map(r => (
+                        <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} (STAFF)</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="ATTENDEE & GUEST GROUPS">
+                      {customRoles.filter(r => r.category === 'attendee').map(r => (
+                        <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} (PASS)</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
+                {/* Gate Selection if Staff Role Chosen */}
+                {isStaffRole(manualUserRole) && (
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Assign Gate Checkpoint</label>
+                    <select
+                      value={manualUserGate}
+                      onChange={(e) => setManualUserGate(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold cursor-pointer"
+                    >
+                      <option value="">Unassigned Gate</option>
+                      {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowAddUserModal(false)}>Cancel</Button>
+                  <Button type="submit" className="flex-1">Add User & Issue Credentials</Button>
+                </div>
+              </form>
+            )}
+
+            {/* TAB B: CREATE NEW GROUP / ROLE TYPE */}
+            {addUserModalTab === 'TYPE' && (
+              <form onSubmit={handleCreateCustomRole} className="space-y-4">
+                <Input
+                  label="New Group / Role Name"
+                  placeholder="e.g. Director, Tech Support, Creatives, Vendors, Exhibitors"
+                  required
+                  value={newRoleName}
+                  onChange={e => setNewRoleName(e.target.value)}
+                />
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Group Category</label>
+                  <select
+                    value={newRoleCategory}
+                    onChange={(e) => setNewRoleCategory(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase cursor-pointer"
+                  >
+                    <option value="staff">Staff & Operations (Director, Tech Support, Creatives, Security)</option>
+                    <option value="attendee">Attendees & Guests (Vendors, Exhibitors, Sponsors, Press)</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Wristband Color Name"
+                    placeholder="e.g. Cobalt Blue"
+                    value={newRoleColorName}
+                    onChange={e => setNewRoleColorName(e.target.value)}
+                  />
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
+                    <input
+                      type="color"
+                      value={newRoleColorHex}
+                      onChange={e => setNewRoleColorHex(e.target.value)}
+                      className="w-full h-10 rounded-xl cursor-pointer border p-0.5"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowAddUserModal(false)}>Cancel</Button>
+                  <Button type="submit" className="flex-1">Create Group & Add to Dropdowns</Button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
