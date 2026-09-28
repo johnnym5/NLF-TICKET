@@ -1,0 +1,27 @@
+# Supabase CLI configuration file
+
+project_id = "gcc-carnival"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "https://pass.livestockcarnival.ng"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+
+[analytics]
+enabled = false
