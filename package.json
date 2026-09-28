@@ -8,16 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:unit": "vitest run",
-    "test:rules": "cd tests && mocha rules.test.js --timeout 10000",
     "test:e2e": "playwright test",
     "test:load": "node tests/load-test.cjs",
     "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
     "canvas-confetti": "^1.9.3",
     "crypto-js": "^4.2.0",
     "dexie": "^4.4.6",
-    "firebase": "^10.13.2",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.441.0",
     "qrcode.react": "^3.1.0",
