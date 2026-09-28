@@ -74,89 +74,53 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 
 -- Gates RLS Policies
+DROP POLICY IF EXISTS "Allow ALL gates" ON public.gates;
 DROP POLICY IF EXISTS "Allow SELECT gates for all authenticated users" ON public.gates;
-CREATE POLICY "Allow SELECT gates for all authenticated users"
-  ON public.gates FOR SELECT TO authenticated USING (true);
-
 DROP POLICY IF EXISTS "Allow anon SELECT gates" ON public.gates;
-CREATE POLICY "Allow anon SELECT gates"
-  ON public.gates FOR SELECT TO anon USING (true);
-
 DROP POLICY IF EXISTS "Allow ALL gates for admins" ON public.gates;
-CREATE POLICY "Allow ALL gates for admins"
-  ON public.gates FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'::public.user_roles
-    )
-  );
+
+CREATE POLICY "Allow ALL gates"
+  ON public.gates FOR ALL
+  TO authenticated, anon
+  USING (true)
+  WITH CHECK (true);
 
 -- Profiles RLS Policies
+DROP POLICY IF EXISTS "Allow ALL profiles" ON public.profiles;
 DROP POLICY IF EXISTS "Allow SELECT own profile or admins" ON public.profiles;
-CREATE POLICY "Allow SELECT own profile or admins"
-  ON public.profiles FOR SELECT TO authenticated
-  USING (
-    id = auth.uid() OR
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'::public.user_roles
-    )
-  );
-
 DROP POLICY IF EXISTS "Allow UPDATE own profile or admins" ON public.profiles;
-CREATE POLICY "Allow UPDATE own profile or admins"
-  ON public.profiles FOR UPDATE TO authenticated
-  USING (
-    id = auth.uid() OR
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'::public.user_roles
-    )
-  );
-
 DROP POLICY IF EXISTS "Allow INSERT profiles" ON public.profiles;
-CREATE POLICY "Allow INSERT profiles"
-  ON public.profiles FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Allow ALL profiles"
+  ON public.profiles FOR ALL
+  TO authenticated, anon
+  USING (true)
+  WITH CHECK (true);
 
 -- Tickets RLS Policies
+DROP POLICY IF EXISTS "Allow SELECT tickets" ON public.tickets;
+DROP POLICY IF EXISTS "Allow INSERT tickets" ON public.tickets;
+DROP POLICY IF EXISTS "Allow UPDATE tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow SELECT tickets for owners, gatekeepers, security, admins" ON public.tickets;
-CREATE POLICY "Allow SELECT tickets for owners, gatekeepers, security, admins"
-  ON public.tickets FOR SELECT TO authenticated
-  USING (
-    owner_id = auth.uid() OR
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid()
-        AND profiles.role IN ('admin'::public.user_roles, 'gatekeeper'::public.user_roles, 'security'::public.user_roles)
-    )
-  );
-
 DROP POLICY IF EXISTS "Allow anon SELECT tickets by ticket_code" ON public.tickets;
-CREATE POLICY "Allow anon SELECT tickets by ticket_code"
-  ON public.tickets FOR SELECT TO anon USING (true);
-
 DROP POLICY IF EXISTS "Allow INSERT tickets for admins, gatekeepers, or self" ON public.tickets;
-CREATE POLICY "Allow INSERT tickets for admins, gatekeepers, or self"
-  ON public.tickets FOR INSERT TO authenticated
-  WITH CHECK (
-    owner_id = auth.uid() OR
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid()
-        AND profiles.role IN ('admin'::public.user_roles, 'gatekeeper'::public.user_roles)
-    )
-  );
-
 DROP POLICY IF EXISTS "Allow UPDATE tickets for admins" ON public.tickets;
-CREATE POLICY "Allow UPDATE tickets for admins"
-  ON public.tickets FOR UPDATE TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'::public.user_roles
-    )
-  );
+
+CREATE POLICY "Allow SELECT tickets"
+  ON public.tickets FOR SELECT
+  TO authenticated, anon
+  USING (true);
+
+CREATE POLICY "Allow INSERT tickets"
+  ON public.tickets FOR INSERT
+  TO authenticated, anon
+  WITH CHECK (true);
+
+CREATE POLICY "Allow UPDATE tickets"
+  ON public.tickets FOR UPDATE
+  TO authenticated, anon
+  USING (true)
+  WITH CHECK (true);
 
 -- 5. Trigger on auth.users -> public.profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -171,8 +135,8 @@ BEGIN
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', 'User'),
     CASE
-      WHEN NEW.email IN ('admin@livestockcarnival.ng', 'admin@gcc.com') THEN 'admin'::public.user_roles
-      WHEN NEW.email LIKE 'qrscanner%' THEN 'gatekeeper'::public.user_roles
+      WHEN LOWER(NEW.email) IN ('admin@livestockcarnival.ng', 'admin@gcc.com') THEN 'admin'::public.user_roles
+      WHEN LOWER(NEW.email) LIKE 'qrscanner%' THEN 'gatekeeper'::public.user_roles
       ELSE 'user'::public.user_roles
     END
   )
