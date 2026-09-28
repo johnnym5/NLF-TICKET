@@ -4,7 +4,7 @@
 -- 1. Create tickets table
 CREATE TABLE IF NOT EXISTS public.tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  uid TEXT REFERENCES auth.users(id) ON DELETE CASCADE,
+  uid UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   "fullName" TEXT NOT NULL,
   email TEXT NOT NULL,
   "ticketCode" TEXT NOT NULL UNIQUE,
