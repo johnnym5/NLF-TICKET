@@ -36,7 +36,9 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
       if (onSuccess) onSuccess(user);
       handleClose();
     } catch (err) {
-      setError(err.message || 'Authentication interrupted.');
+      if (err.message && !err.message.includes('closed')) {
+        setError(err.message || 'Authentication interrupted.');
+      }
     } finally {
       setLoading(false);
     }

@@ -62,6 +62,15 @@ export function AuthProvider({ children }) {
     let ticketChannel = null;
 
     const setupAuth = async () => {
+      // If running inside the Google OAuth Popup window, close popup once session is detected
+      if (window.opener && window.name === 'GoogleSignInPopup') {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          window.close();
+          return;
+        }
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       const user = session?.user || null;
       setCurrentUser(user);
@@ -79,6 +88,13 @@ export function AuthProvider({ children }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const user = session?.user || null;
+
+      // Close popup if this window is the OAuth popup
+      if (user && window.opener && window.name === 'GoogleSignInPopup') {
+        window.close();
+        return;
+      }
+
       setCurrentUser(user);
 
       if (user) {
@@ -232,14 +248,58 @@ export function AuthProvider({ children }) {
   };
 
   const signInWithGoogle = async (invitationId = null) => {
+    const callbackUrl = `${import.meta.env.VITE_APP_URL || window.location.origin}`;
+
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${import.meta.env.VITE_APP_URL || window.location.origin}`
+        skipBrowserRedirect: true,
+        redirectTo: callbackUrl
       }
     });
 
     if (error) throw error;
+
+    if (data?.url) {
+      const width = 500;
+      const height = 600;
+      const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+      const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+
+      const popup = window.open(
+        data.url,
+        'GoogleSignInPopup',
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=yes`
+      );
+
+      if (!popup) {
+        // Fallback if popup is blocked by browser settings
+        window.location.href = data.url;
+        return data;
+      }
+
+      return new Promise((resolve, reject) => {
+        const timer = setInterval(async () => {
+          try {
+            if (popup.closed) {
+              clearInterval(timer);
+              const { data: { session } } = await supabase.auth.getSession();
+              if (session?.user) {
+                if (invitationId) {
+                  await ensureAttendeeDoc(session.user, session.user.user_metadata?.full_name, invitationId);
+                }
+                resolve(session.user);
+              } else {
+                reject(new Error('Google sign in window was closed before completion.'));
+              }
+            }
+          } catch (e) {
+            // Ignore cross-origin popup errors while user is authenticating on Google
+          }
+        }, 500);
+      });
+    }
+
     return data;
   };
 
