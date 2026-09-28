@@ -1,22 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signOut,
-  onAuthStateChanged,
-  sendEmailVerification
-} from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  onSnapshot,
-  serverTimestamp,
-  increment
-} from 'firebase/firestore';
-import { auth, db, googleProvider } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext();
 
@@ -76,97 +59,135 @@ export function AuthProvider({ children }) {
   const [isNewRegistration, setIsNewRegistration] = useState(false);
 
   useEffect(() => {
-    let unsubscribeDoc = null;
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    let ticketChannel = null;
+
+    const setupAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user || null;
       setCurrentUser(user);
+
       if (user) {
-        try {
-          const docRef = doc(db, 'attendees', user.uid);
-          unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              setAttendeeRecord(data);
-
-              // Set role from Firestore, fallback to email-based derivation
-              if (data.role) {
-                setUserRole(data.role);
-              } else {
-                let derivedRole = 'attendee';
-                if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
-                else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
-                setUserRole(derivedRole);
-              }
-
-              localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(data));
-            } else {
-              // Derive role from email if no doc yet
-              let derivedRole = 'attendee';
-              if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
-              else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
-              setUserRole(derivedRole);
-
-              const cached = localStorage.getItem(`gcc_attendee_${user.uid}`);
-              if (cached) {
-                setAttendeeRecord(JSON.parse(cached));
-              }
-            }
-            setLoading(false);
-          }, (err) => {
-            console.warn('Firestore snapshot subscription warning:', err);
-            const cached = localStorage.getItem(`gcc_attendee_${user.uid}`);
-            if (cached) setAttendeeRecord(JSON.parse(cached));
-            setLoading(false);
-          });
-        } catch (err) {
-          console.error('Error attaching doc listener:', err);
-          setLoading(false);
-        }
+        await fetchAndSubscribeAttendee(user);
       } else {
         setAttendeeRecord(null);
         setUserRole('attendee');
         setLoading(false);
       }
+    };
+
+    setupAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const user = session?.user || null;
+      setCurrentUser(user);
+
+      if (user) {
+        await fetchAndSubscribeAttendee(user);
+      } else {
+        setAttendeeRecord(null);
+        setUserRole('attendee');
+        setLoading(false);
+        if (ticketChannel) supabase.removeChannel(ticketChannel);
+      }
     });
 
+    const fetchAndSubscribeAttendee = async (user) => {
+      try {
+        const { data, error } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('uid', user.id)
+          .maybeSingle();
+
+        if (data) {
+          setAttendeeRecord(data);
+          deriveAndSetRole(user, data);
+          localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(data));
+        } else {
+          deriveAndSetRole(user, null);
+          const cached = localStorage.getItem(`gcc_attendee_${user.id}`);
+          if (cached) setAttendeeRecord(JSON.parse(cached));
+        }
+
+        // Subscribe to real-time changes on tickets table for current user
+        if (ticketChannel) supabase.removeChannel(ticketChannel);
+        ticketChannel = supabase
+          .channel(`ticket_user_${user.id}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'tickets', filter: `uid=eq.${user.id}` },
+            (payload) => {
+              if (payload.new) {
+                setAttendeeRecord(payload.new);
+                deriveAndSetRole(user, payload.new);
+                localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(payload.new));
+              }
+            }
+          )
+          .subscribe();
+
+      } catch (err) {
+        console.warn('Supabase ticket fetch warning:', err);
+        const cached = localStorage.getItem(`gcc_attendee_${user.id}`);
+        if (cached) setAttendeeRecord(JSON.parse(cached));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const deriveAndSetRole = (user, record) => {
+      if (record?.role) {
+        setUserRole(record.role);
+      } else {
+        let derivedRole = 'attendee';
+        if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
+        else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
+        setUserRole(derivedRole);
+      }
+    };
+
     return () => {
-      unsubscribeAuth();
-      if (unsubscribeDoc) unsubscribeDoc();
+      subscription.unsubscribe();
+      if (ticketChannel) supabase.removeChannel(ticketChannel);
     };
   }, []);
 
   const ensureAttendeeDoc = async (user, fullName, invitationId = null) => {
     try {
-      const docRef = doc(db, 'attendees', user.uid);
-      const docSnap = await getDoc(docRef);
+      const { data: existingDoc } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('uid', user.id)
+        .maybeSingle();
 
-      if (!docSnap.exists()) {
-        // Since Cloud Functions are unavailable on Spark plan, we handle registration client-side.
-        // In a real production app on Spark, we'd use security rules to validate invitationId if possible,
-        // but for now, we'll implement a robust client-side creation.
-
+      if (!existingDoc) {
         let tier = 'REGULAR';
         if (invitationId) {
-            const invRef = doc(db, 'vipInvitations', invitationId);
-            const invSnap = await getDoc(invRef);
-            if (invSnap.exists()) {
-                const invData = invSnap.data();
-                const now = new Date();
-                const expiresAt = invData.expiresAt?.seconds ? new Date(invData.expiresAt.seconds * 1000) : new Date(invData.expiresAt);
+          const { data: invData } = await supabase
+            .from('vip_invitations')
+            .select('*')
+            .eq('id', invitationId)
+            .maybeSingle();
 
-                if (expiresAt > now && !invData.isUsed) {
-                    tier = invData.tier || 'REGULAR';
-                    // Mark as used if we want one-time links
-                    await updateDoc(invRef, { isUsed: true, usedBy: user.uid });
-                }
+          if (invData) {
+            const now = new Date();
+            const expiresAt = new Date(invData.expiresAt);
+            if (expiresAt > now && !invData.isUsed) {
+              tier = invData.tier || 'REGULAR';
+              await supabase
+                .from('vip_invitations')
+                .update({ isUsed: true, usedBy: user.id })
+                .eq('id', invitationId);
             }
+          }
         }
 
         const ticketCode = generateTicketCode(tier);
         const wristbandColor = TIER_WRISTBANDS[tier] || TIER_WRISTBANDS.REGULAR;
 
         const newRecord = {
-          uid: user.uid,
-          fullName: fullName || user.displayName || 'Attendee',
+          uid: user.id,
+          fullName: fullName || user.user_metadata?.full_name || user.displayName || 'Attendee',
           email: user.email,
           ticketCode,
           tier,
@@ -178,30 +199,31 @@ export function AuthProvider({ children }) {
           checkedInFullDate: null,
           checkedInBy: null,
           referralSource: invitationId ? 'vip_invitation' : 'direct',
-          createdAt: serverTimestamp()
+          role: 'attendee',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
 
-        await setDoc(docRef, newRecord);
+        const { data: inserted, error: insertError } = await supabase
+          .from('tickets')
+          .insert(newRecord)
+          .select('*')
+          .single();
 
-        // Client-side counter increment for Spark plan
-        try {
-          const statsRef = doc(db, 'eventStats', 'global');
-          await setDoc(statsRef, {
-            totalRegistrations: increment(1)
-          }, { merge: true });
-        } catch (e) {
-          console.warn('Stats update failed (might be permissions):', e);
+        if (insertError) {
+          console.error('Error inserting ticket:', insertError);
+          throw insertError;
         }
 
-        setAttendeeRecord(newRecord);
-        localStorage.setItem(`gcc_attendee_${user.uid}`, JSON.stringify(newRecord));
+        const finalRecord = inserted || newRecord;
+        setAttendeeRecord(finalRecord);
+        localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(finalRecord));
         setIsNewRegistration(true);
 
-        return newRecord;
+        return finalRecord;
       } else {
-        const data = docSnap.data();
-        setAttendeeRecord(data);
-        return data;
+        setAttendeeRecord(existingDoc);
+        return existingDoc;
       }
     } catch (err) {
       console.error('Registration failed:', err);
@@ -210,33 +232,48 @@ export function AuthProvider({ children }) {
   };
 
   const signInWithGoogle = async (invitationId = null) => {
-    const result = await signInWithPopup(auth, googleProvider);
-    const user = result.user;
-    await ensureAttendeeDoc(user, user.displayName, invitationId);
-    return user;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${import.meta.env.VITE_APP_URL || window.location.origin}`
+      }
+    });
+
+    if (error) throw error;
+    return data;
   };
 
   const registerWithEmail = async (email, password, fullName, invitationId = null) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const user = cred.user;
-    if (fullName) {
-      await updateProfile(user, { displayName: fullName });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName
+        }
+      }
+    });
+
+    if (error) throw error;
+    const user = data.user;
+    if (user) {
+      await ensureAttendeeDoc(user, fullName, invitationId);
     }
-
-    // Send verification email
-    await sendEmailVerification(user);
-
-    await ensureAttendeeDoc(user, fullName, invitationId);
     return user;
   };
 
   const loginWithEmail = async (email, password) => {
-    const cred = await signInWithEmailAndPassword(auth, email, password);
-    return cred.user;
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) throw error;
+    return data.user;
   };
 
   const logout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
     setAttendeeRecord(null);
     setIsNewRegistration(false);
     setUserRole('attendee');

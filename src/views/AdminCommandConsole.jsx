@@ -1,15 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  collection,
-  onSnapshot,
-  doc,
-  updateDoc,
-  setDoc,
-  serverTimestamp,
-  query,
-  orderBy
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { useAuth, TIER_WRISTBANDS, TIER_LABELS } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
@@ -63,7 +53,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Live attendees list from Firestore
+  // Live attendees list from Supabase
   const [attendees, setAttendees] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -91,15 +81,18 @@ export default function AdminCommandConsole({ onNavigate }) {
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins from now
 
     try {
-      await setDoc(doc(db, 'vipInvitations', inviteId), {
+      const { error } = await supabase.from('vip_invitations').insert({
+        id: inviteId,
         tier: selectedVipTier,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         expiresAt: expiresAt.toISOString(),
         isUsed: false,
-        createdBy: currentUser.uid
+        createdBy: currentUser?.id
       });
 
-      const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://nlf2026.carnival.ng';
+      if (error) throw error;
+
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://pass.livestockcarnival.ng';
       setGeneratedVipUrl(`${baseUrl}/?invite=${inviteId}`);
     } catch (err) {
       console.error('Failed to generate invite:', err);
@@ -114,7 +107,6 @@ export default function AdminCommandConsole({ onNavigate }) {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(generatedVipUrl);
       } else {
-        // Fallback for insecure contexts (HTTP / IP Access)
         const textArea = document.createElement("textarea");
         textArea.value = generatedVipUrl;
         textArea.style.position = "fixed";
@@ -148,30 +140,48 @@ export default function AdminCommandConsole({ onNavigate }) {
     setIsAuthenticated(userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com');
   }, [userRole, currentUser]);
 
-  // Real-time synchronization
+  // Real-time synchronization via Supabase Postgres Changes
   useEffect(() => {
     if (!isAuthenticated) return;
     setLoading(true);
-    const attendeesRef = collection(db, 'attendees');
-    const q = query(attendeesRef, orderBy('createdAt', 'desc'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAttendees(records);
+    const fetchAttendees = async () => {
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('*')
+        .order('createdAt', { ascending: false });
+
+      if (!error && data) {
+        setAttendees(data);
+      }
       setLoading(false);
-    }, (err) => {
-      console.error('Admin real-time error:', err);
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    };
+
+    fetchAttendees();
+
+    const channel = supabase
+      .channel('admin_tickets_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setAttendees(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setAttendees(prev => prev.map(a => a.id === payload.new.id ? payload.new : a));
+        } else if (payload.eventType === 'DELETE') {
+          setAttendees(prev => prev.filter(a => a.id === payload.old.id));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [isAuthenticated]);
 
   // Helper: Date Logic for filtering
   const isInTimeScope = (createdAt, scope) => {
     if (!createdAt || scope === 'ALL') return true;
 
-    // Support both serverTimestamp (obj with seconds) and ISO strings
-    const date = createdAt?.seconds ? new Date(createdAt.seconds * 1000) : new Date(createdAt);
+    const date = new Date(createdAt);
     const now = new Date();
 
     if (scope === 'TODAY') {
@@ -198,7 +208,6 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   // Derive Statistics directly from the live attendees list
   const stats = useMemo(() => {
-    // We apply time scope only to the "Registrations" count to show velocity
     const scopeAttendees = attendees.filter(a => isInTimeScope(a.createdAt, regTimeScope));
 
     const total = scopeAttendees.length;
@@ -262,19 +271,21 @@ export default function AdminCommandConsole({ onNavigate }) {
   const handleUpgradeAccount = async (attendee, newTier) => {
     if (!window.confirm(`Upgrade ${attendee.fullName} to ${newTier}?`)) return;
     try {
-      await updateDoc(doc(db, 'attendees', attendee.id), {
+      const { error } = await supabase.from('tickets').update({
         tier: newTier,
         wristbandColor: TIER_WRISTBANDS[newTier] || 'Emerald Green'
-      });
+      }).eq('id', attendee.id);
+      if (error) throw error;
     } catch (err) { alert(err.message); }
   };
 
   const handleUpdateRole = async (attendee, newRole) => {
     if (!window.confirm(`Change ${attendee.fullName} role to ${newRole}?`)) return;
     try {
-      await updateDoc(doc(db, 'attendees', attendee.id), {
+      const { error } = await supabase.from('tickets').update({
         role: newRole
-      });
+      }).eq('id', attendee.id);
+      if (error) throw error;
     } catch (err) { alert(err.message); }
   };
 
@@ -282,10 +293,11 @@ export default function AdminCommandConsole({ onNavigate }) {
     if (!window.confirm(`${attendee.accessRevoked ? 'Restore' : 'Revoke'} access for ${attendee.fullName}?`)) return;
     try {
       const isNowRevoked = !attendee.accessRevoked;
-      await updateDoc(doc(db, 'attendees', attendee.id), {
+      const { error } = await supabase.from('tickets').update({
         accessRevoked: isNowRevoked,
         status: isNowRevoked ? 'REVOKED' : (attendee.status === 'REVOKED' ? 'REGISTERED' : attendee.status)
-      });
+      }).eq('id', attendee.id);
+      if (error) throw error;
     } catch (err) { alert(err.message); }
   };
 
@@ -293,24 +305,26 @@ export default function AdminCommandConsole({ onNavigate }) {
     if (!window.confirm(`Regenerate QR code for ${attendee.fullName}?`)) return;
     const entropy = Math.random().toString(36).substring(2, 8).toUpperCase();
     try {
-      await updateDoc(doc(db, 'attendees', attendee.id), {
+      const { error } = await supabase.from('tickets').update({
         ticketCode: `GCC-2026-${entropy}`,
         status: 'REGISTERED',
         daysAttended: { day1: false, day2: false, day3: false }
-      });
+      }).eq('id', attendee.id);
+      if (error) throw error;
     } catch (err) { alert(err.message); }
   };
 
   const handleManualCheckIn = async (attendee) => {
     if (!window.confirm(`Manually check in ${attendee.fullName}?`)) return;
     try {
-      await updateDoc(doc(db, 'attendees', attendee.id), {
+      const { error } = await supabase.from('tickets').update({
         status: 'CHECKED_IN',
         checkedInAt: new Date().toLocaleTimeString(),
         checkedInFullDate: new Date().toISOString(),
         checkedInBy: 'ADMIN_MANUAL',
         daysAttended: { ...(attendee.daysAttended || {}), day1: true }
-      });
+      }).eq('id', attendee.id);
+      if (error) throw error;
     } catch (err) { alert(err.message); }
   };
 
@@ -318,10 +332,10 @@ export default function AdminCommandConsole({ onNavigate }) {
     if (attendees.length === 0) return;
     const headers = ['Full Name', 'Email', 'Ticket Code', 'Tier', 'Status', 'Revoked', 'Registration Date'];
     const rows = attendees.map(a => {
-        const date = a.createdAt?.seconds ? new Date(a.createdAt.seconds * 1000) : new Date(a.createdAt);
-        return [
-            `"${a.fullName}"`, `"${a.email}"`, `"${a.ticketCode}"`, `"${a.tier}"`, `"${a.status}"`, `"${a.accessRevoked}"`, `"${date.toLocaleDateString()}"`
-        ];
+      const date = new Date(a.createdAt);
+      return [
+        `"${a.fullName}"`, `"${a.email}"`, `"${a.ticketCode}"`, `"${a.tier}"`, `"${a.status}"`, `"${a.accessRevoked}"`, `"${date.toLocaleDateString()}"`
+      ];
     });
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const link = document.createElement("a");
@@ -500,7 +514,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               <p className="text-[10px] font-bold text-amber-600/60 uppercase">Registered but unscanned</p>
             </button>
 
-            {/* Turnout Rate (Static) */}
+            {/* Turnout Rate */}
             <div className="premium-card p-6 flex flex-col justify-between h-36 bg-slate-900 text-white shadow-xl">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Turnout</span>
@@ -651,7 +665,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                       <td className="px-8 py-6">
                         <div className="flex flex-col gap-2">
                           <Badge variant={isRevoked ? 'error' : (attendee.status === 'CHECKED_IN' ? 'success' : 'pending')} className="w-fit">
-                            {isRevoked ? 'Access Revoked' : attendee.status.replace('_', ' ')}
+                            {isRevoked ? 'Access Revoked' : (attendee.status || 'REGISTERED').replace('_', ' ')}
                           </Badge>
                           <div className="flex gap-1.5">
                              {['day1', 'day2', 'day3'].map(d => (

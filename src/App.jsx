@@ -132,7 +132,11 @@ function AppContent() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-slate-900 flex items-center justify-center text-white text-[8px] font-black tracking-widest uppercase">NLF</div>
+                  <img
+                    src="/logo.jpeg"
+                    alt="Livestock Carnival Logo"
+                    className="w-7 h-7 rounded-md object-cover shadow-sm"
+                  />
                   <span className="font-black text-slate-900 uppercase tracking-tighter text-[10px]">National Livestock Festival 2026</span>
                 </div>
                 <p className="text-[9px] text-slate-500 font-medium max-w-sm leading-tight uppercase tracking-wider">

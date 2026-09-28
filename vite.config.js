@@ -7,16 +7,22 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['logo.jpeg', 'favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
       manifest: {
         name: 'NLF 2026 Gate Scanner',
         short_name: 'NLF Scanner',
         description: 'National Livestock Festival 2026 Attendee Pass & Gate Scanner',
-        theme_color: '#1E4D38',
+        theme_color: '#0e3820',
         background_color: '#FBFBFA',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
+          {
+            src: 'logo.jpeg',
+            sizes: '512x512',
+            type: 'image/jpeg',
+            purpose: 'any maskable'
+          },
           {
             src: 'icon.svg',
             sizes: '512x512',
@@ -68,11 +74,19 @@ export default defineConfig({
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
-          scanner: ['html5-qrcode'],
-          icons: ['lucide-react']
+        manualChunks(id) {
+          if (id.includes('node_modules/firebase')) {
+            return 'firebase';
+          }
+          if (id.includes('node_modules/html5-qrcode')) {
+            return 'scanner';
+          }
+          if (id.includes('node_modules/lucide-react')) {
+            return 'icons';
+          }
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            return 'vendor';
+          }
         }
       }
     }

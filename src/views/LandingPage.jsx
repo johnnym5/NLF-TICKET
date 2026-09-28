@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth, TIER_LABELS, TIER_WRISTBANDS } from '../context/AuthContext';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import {
   Calendar, 
   MapPin, 
@@ -46,23 +45,34 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
   const wristbandColor = TIER_WRISTBANDS[vipTier] || TIER_WRISTBANDS.REGULAR;
 
   useEffect(() => {
-    let unsubscribe = () => {};
-    try {
-      const statsRef = doc(db, 'eventStats', 'global');
-      unsubscribe = onSnapshot(statsRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.totalRegistrations !== undefined) {
-            setTotalTickets(data.totalRegistrations);
-          }
+    let channel = null;
+
+    const fetchTicketCount = async () => {
+      try {
+        const { count, error } = await supabase
+          .from('tickets')
+          .select('*', { count: 'exact', head: true });
+
+        if (!error && count !== null) {
+          setTotalTickets(count);
         }
-      }, (err) => {
-        console.warn('Error fetching eventStats for landing page:', err);
-      });
-    } catch (err) {
-      console.warn('Failed to listen to eventStats:', err);
-    }
-    return () => unsubscribe();
+      } catch (err) {
+        console.warn('Error fetching ticket count for landing page:', err);
+      }
+    };
+
+    fetchTicketCount();
+
+    channel = supabase
+      .channel('landing_page_tickets_count')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets' }, () => {
+        fetchTicketCount();
+      })
+      .subscribe();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
   }, []);
 
   return (
@@ -106,6 +116,13 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 text-center">
           <ScrollReveal delay={100}>
+            <div className="flex justify-center mb-6">
+              <img
+                src="/logo.jpeg"
+                alt="Livestock Carnival Logo"
+                className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl shadow-xl border-2 border-emerald-900/10 object-cover"
+              />
+            </div>
             <span className="section-label">Official Event Platform</span>
             <h1 className="text-5xl sm:text-7xl lg:text-8xl font-black text-slate-900 tracking-tight leading-[1] mb-6">
               National Livestock <br />

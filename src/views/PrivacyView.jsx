@@ -26,7 +26,7 @@ export default function PrivacyView() {
                 <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Data Collection</h2>
               </div>
               <p className="text-slate-600 leading-relaxed font-medium">
-                We collect essential information to facilitate your event accreditation, including your full name, email address, and ticket tier. This data is securely stored using Google Firebase (Firestore) and is only accessible by authorized event stewards.
+                We collect essential information to facilitate your event accreditation, including your full name, email address, and ticket tier. This data is securely stored using Supabase (PostgreSQL) and is only accessible by authorized event stewards.
               </p>
             </section>
 

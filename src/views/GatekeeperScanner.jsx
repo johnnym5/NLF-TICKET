@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { doc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { soundFX } from '../utils/audio';
 import { TIER_WRISTBANDS, useAuth } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
@@ -44,7 +42,6 @@ export default function GatekeeperScanner() {
   const [hasPin, setHasPin] = useState(!!localStorage.getItem('gcc_gate_pin_hash'));
   const [selectedGate, setSelectedGate] = useState(GATE_LOCATIONS[0]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Scanner states
   const [cameraActive, setCameraActive] = useState(false);
@@ -57,7 +54,6 @@ export default function GatekeeperScanner() {
   const processingRef = useRef(false);
 
   useEffect(() => {
-    // Derive role from email or claims for Spark compatibility
     const isAdmin = userRole === 'executive_admin' || currentUser?.email === 'admin@gcc.com';
     const isGate = userRole === 'gatekeeper' || currentUser?.email?.startsWith('qrscanner');
     setIsAuthenticated(isAdmin || isGate);
@@ -92,10 +88,6 @@ export default function GatekeeperScanner() {
       if (result.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
-
-        // Manual stats increment for Spark
-        const statsRef = doc(db, 'eventStats', 'global');
-        await updateDoc(statsRef, { totalCheckedIn: increment(1) });
       } else {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();
@@ -115,7 +107,6 @@ export default function GatekeeperScanner() {
     setCameraError('');
     setScannedResult(null);
     try {
-      // 1. Clean up any existing instance first
       if (scannerRef.current) {
         try {
           if (scannerRef.current.isScanning) {
@@ -127,7 +118,6 @@ export default function GatekeeperScanner() {
         scannerRef.current = null;
       }
 
-      // 2. Create new instance
       const html5Qr = new Html5Qrcode('gatekeeper-reader');
       scannerRef.current = html5Qr;
 
@@ -247,7 +237,7 @@ export default function GatekeeperScanner() {
         )}
       </div>
 
-      {/* Result Display - Overlays or fixed area */}
+      {/* Result Display */}
       {scannedResult && (
         <div className="animate-fadeIn">
           <div className={`p-6 rounded-xl border-2 ${

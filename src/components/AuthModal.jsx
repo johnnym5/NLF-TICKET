@@ -83,9 +83,11 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
         {/* Header Section */}
         <div className="px-8 pt-8 pb-6">
           <div className="flex items-center justify-between mb-6">
-            <div className="w-10 h-10 rounded-xl bg-sage-light flex items-center justify-center text-sage-deep">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
+            <img
+              src="/logo.jpeg"
+              alt="Livestock Carnival Logo"
+              className="w-10 h-10 rounded-xl object-cover shadow-sm"
+            />
             <button onClick={handleClose} className="p-2 rounded-full hover:bg-slate-100 transition-colors">
               <X className="w-5 h-5 text-slate-400" />
             </button>

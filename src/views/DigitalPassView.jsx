@@ -90,7 +90,7 @@ export default function DigitalPassView({ onOpenAuth }) {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="px-1.5 py-0.5 rounded bg-sage-deep text-[10px] font-black tracking-widest border border-emerald-800">NLF</span>
+                  <img src="/logo.jpeg" alt="Livestock Carnival Logo" className="w-5 h-5 rounded object-cover" />
                   <h3 className="text-[11px] font-black tracking-tighter uppercase text-slate-300">
                     National Livestock Festival 2026
                   </h3>

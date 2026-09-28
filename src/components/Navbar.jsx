@@ -36,9 +36,11 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
             onClick={() => setCurrentRoute('landing')}
             className="flex items-center gap-3 cursor-pointer group"
           >
-            <div className="w-9 h-9 rounded-lg bg-sage-deep flex items-center justify-center text-white shadow-sm transition-transform group-hover:scale-105">
-              <span className="text-[10px] font-black tracking-widest uppercase">NLF</span>
-            </div>
+            <img
+              src="/logo.jpeg"
+              alt="Livestock Carnival Logo"
+              className="w-10 h-10 rounded-lg object-cover shadow-sm transition-transform group-hover:scale-105 border border-emerald-900/10"
+            />
             <div className="hidden sm:block">
               <span className="font-black text-sm text-slate-900 uppercase tracking-tighter">Festival 2026</span>
               <p className="text-[9px] font-black text-amber-600 uppercase tracking-[0.2em] -mt-0.5">Abuja Carnival</p>

@@ -8,9 +8,12 @@ const SECRET_KEY_B64 = 'oQP18t/04sTS+oXkmvGU+qPvwWV1HabcdvedYFUg+EEki/J0nXyElK1J
 const EVENT_ID = 'GCC2026';
 
 function signPass(payload, secretKeyB64) {
-  const secretKey = Buffer.from(secretKeyB64, 'base64');
+  const buf = Buffer.from(secretKeyB64, 'base64');
+  const secretKey = new Uint8Array(buf);
   const dataToSign = JSON.stringify(payload, Object.keys(payload).sort());
-  const signature = nacl.sign.detached(Buffer.from(dataToSign), secretKey);
+  const msgBuf = Buffer.from(dataToSign);
+  const message = new Uint8Array(msgBuf);
+  const signature = nacl.sign.detached(message, secretKey);
   payload.sig = Buffer.from(signature).toString('base64');
   return Buffer.from(JSON.stringify(payload)).toString('base64');
 }
@@ -19,11 +22,15 @@ function verifyPass(base64Payload, publicKeyB64) {
   try {
     const jsonStr = Buffer.from(base64Payload, 'base64').toString();
     const payload = JSON.parse(jsonStr);
-    const signature = Buffer.from(payload.sig, 'base64');
-    const publicKey = Buffer.from(publicKeyB64, 'base64');
+    const sigBuf = Buffer.from(payload.sig, 'base64');
+    const signature = new Uint8Array(sigBuf);
+    const pkBuf = Buffer.from(publicKeyB64, 'base64');
+    const publicKey = new Uint8Array(pkBuf);
     const { sig, ...dataWithoutSig } = payload;
     const dataToVerify = JSON.stringify(dataWithoutSig, Object.keys(dataWithoutSig).sort());
-    return nacl.sign.detached.verify(Buffer.from(dataToVerify), signature, publicKey);
+    const dataBuf = Buffer.from(dataToVerify);
+    const message = new Uint8Array(dataBuf);
+    return nacl.sign.detached.verify(message, signature, publicKey);
   } catch (e) {
     return false;
   }
@@ -104,13 +111,11 @@ describe('Cryptographic QR Security', () => {
   });
 
   it('Should fail if expired', () => {
-    // Note: The verifyPass helper above doesn't check exp, but our app code does.
-    // In actual app code:
     function appVerify(b64) {
-        const jsonStr = Buffer.from(b64, 'base64').toString();
-        const p = JSON.parse(jsonStr);
-        if (p.exp < Math.floor(Date.now() / 1000)) return false;
-        return verifyPass(b64, PUBLIC_KEY_B64);
+      const jsonStr = Buffer.from(b64, 'base64').toString();
+      const p = JSON.parse(jsonStr);
+      if (p.exp < Math.floor(Date.now() / 1000)) return false;
+      return verifyPass(b64, PUBLIC_KEY_B64);
     }
 
     const payload = {

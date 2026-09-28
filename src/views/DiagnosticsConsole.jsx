@@ -58,14 +58,13 @@ export default function DiagnosticsConsole() {
     setLogs(prev => [...prev, { id: Date.now(), type, msg, time: new Date().toLocaleTimeString([], { hour12: false }) }]);
   };
 
-  const testFirebaseLatency = async () => {
+  const testSupabaseLatency = async () => {
     setIsTestingLatency(true);
-    addLog('INFO', 'Executing Firestore RTT Heatbeat...');
+    addLog('INFO', 'Executing Supabase Database Handshake...');
     const start = performance.now();
     try {
-      const { getDoc, doc } = await import('firebase/firestore');
-      const { db } = await import('../lib/firebase');
-      await getDoc(doc(db, 'eventStats', 'global'));
+      const { supabase } = await import('../lib/supabase');
+      await supabase.from('tickets').select('id').limit(1);
       setLatency(Math.round(performance.now() - start));
       addLog('SUCCESS', `Connection verified: ${Math.round(performance.now() - start)}ms RTT.`);
     } catch (e) {
@@ -118,10 +117,10 @@ export default function DiagnosticsConsole() {
                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cloud Data Handshake</h3>
             </div>
             <div className="flex items-center justify-between mb-6">
-               <span className="text-xs font-bold text-slate-700">Firestore RTT</span>
+               <span className="text-xs font-bold text-slate-700">Supabase RTT</span>
                <span className="text-xs font-mono font-black text-slate-900">{latency ? `${latency}ms` : '---'}</span>
             </div>
-            <Button variant="secondary" className="w-full text-xs" loading={isTestingLatency} onClick={testFirebaseLatency}>
+            <Button variant="secondary" className="w-full text-xs" loading={isTestingLatency} onClick={testSupabaseLatency}>
                Execute Heartbeat Test
             </Button>
           </div>
@@ -133,7 +132,7 @@ export default function DiagnosticsConsole() {
              </div>
              <div className="space-y-3">
                 {[
-                  { l: 'App Check Status', v: 'ACTIVE', s: 'success' },
+                  { l: 'RLS Status', v: 'ACTIVE', s: 'success' },
                   { l: 'QR Cryptography', v: 'ED25519', s: 'pending' },
                   { l: 'Auth Claims', v: 'VERIFIED', s: 'success' }
                 ].map((item, i) => (

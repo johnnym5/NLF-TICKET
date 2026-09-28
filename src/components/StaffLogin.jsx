@@ -41,9 +41,11 @@ export default function StaffLogin({ title, subtitle, allowedEmails, onSuccess }
   return (
     <div className="max-w-md mx-auto my-24 px-4">
       <div className="premium-card p-10 text-center relative overflow-hidden">
-        <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white mx-auto flex items-center justify-center mb-6 shadow-md">
-          <ShieldCheck className="w-6 h-6" />
-        </div>
+        <img
+          src="/logo.jpeg"
+          alt="Livestock Carnival Logo"
+          className="w-12 h-12 rounded-2xl object-cover mx-auto shadow-md mb-6"
+        />
 
         <h2 className="text-xl font-black text-slate-900 uppercase tracking-tighter mb-1">
           {title}
