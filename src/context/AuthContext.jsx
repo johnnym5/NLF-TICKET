@@ -85,7 +85,6 @@ export function AuthProvider({ children }) {
     let ticketChannel = null;
 
     const setupAuth = async () => {
-      // If running inside the Google OAuth Popup window, close popup once session is detected
       if (window.opener && window.name === 'GoogleSignInPopup') {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
@@ -130,7 +129,7 @@ export function AuthProvider({ children }) {
 
     const loadUserData = async (user) => {
       try {
-        // 1. Fetch Profile with gate details
+        // 1. Fetch Profile
         let { data: profile } = await supabase
           .from('profiles')
           .select('*, gates(*)')
@@ -155,10 +154,6 @@ export function AuthProvider({ children }) {
           profile = newProfile;
         }
 
-        setUserProfile(profile);
-        setUserRole(profile?.role || 'user');
-        setAssignedGate(profile?.gates || null);
-
         // 2. Fetch User Ticket
         const { data: ticket } = await supabase
           .from('tickets')
@@ -169,9 +164,18 @@ export function AuthProvider({ children }) {
 
         if (ticket) {
           setUserTicket(ticket);
+          // Auto-sync role to attendee if ticket exists and current role is 'user'
+          if (profile && profile.role === 'user') {
+            await supabase.from('profiles').update({ role: 'attendee' }).eq('id', user.id);
+            profile.role = 'attendee';
+          }
         }
 
-        // Setup realtime listeners
+        setUserProfile(profile);
+        setUserRole(profile?.role || 'user');
+        setAssignedGate(profile?.gates || null);
+
+        // Realtime channels
         if (profileChannel) supabase.removeChannel(profileChannel);
         profileChannel = supabase
           .channel(`profile_${user.id}`)
@@ -240,6 +244,13 @@ export function AuthProvider({ children }) {
 
       if (existingTicket) {
         setUserTicket(existingTicket);
+
+        // Ensure role is attendee
+        if (userRole === 'user') {
+          await supabase.from('profiles').update({ role: 'attendee' }).eq('id', dbUser.id);
+          setUserRole('attendee');
+        }
+
         return existingTicket;
       }
 
@@ -265,13 +276,17 @@ export function AuthProvider({ children }) {
 
       if (insertErr) throw insertErr;
 
-      // Update role to attendee in profile
-      await supabase
-        .from('profiles')
-        .update({ role: 'attendee' })
-        .eq('id', dbUser.id);
+      // Update role to attendee in profiles table
+      const isStaffOrAdmin = ['admin', 'gatekeeper', 'security'].includes(userRole);
+      if (!isStaffOrAdmin) {
+        await supabase
+          .from('profiles')
+          .update({ role: 'attendee' })
+          .eq('id', dbUser.id);
 
-      setUserRole('attendee');
+        setUserRole('attendee');
+      }
+
       setUserTicket(insertedTicket);
       setIsNewRegistration(true);
 
@@ -337,9 +352,7 @@ export function AuthProvider({ children }) {
               clearInterval(timer);
               const { data: { session } } = await supabase.auth.getSession();
               if (session?.user) {
-                if (invitationId) {
-                  await ensureUserTicket(session.user, session.user.user_metadata?.full_name, 'general', invitationId);
-                }
+                await ensureUserTicket(session.user, session.user.user_metadata?.full_name, 'general', invitationId);
                 resolve(session.user);
               } else {
                 reject(new Error('Google sign in window was closed before completion.'));
@@ -381,7 +394,16 @@ export function AuthProvider({ children }) {
     });
 
     if (error) throw error;
-    return data.user;
+    const user = data.user;
+    if (user) {
+      // Auto-ensure ticket if user doesn't have one
+      try {
+        await ensureUserTicket(user, user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
+      } catch (e) {
+        console.warn('Login ticket ensure warning:', e);
+      }
+    }
+    return user;
   };
 
   const logout = async () => {
@@ -394,7 +416,6 @@ export function AuthProvider({ children }) {
     setIsNewRegistration(false);
   };
 
-  // Backward compatibility object for legacy components
   const attendeeRecord = userTicket ? {
     id: userTicket.id,
     uid: userTicket.owner_id,

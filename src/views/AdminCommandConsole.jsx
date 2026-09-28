@@ -74,6 +74,12 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL'); // ALL, CHECKED_IN, PENDING, REVOKED
   const [tierFilter, setTierFilter] = useState('ALL');
+  const [staffRoleFilter, setStaffRoleFilter] = useState('ALL'); // ALL, STAFF, ATTENDEE, USER
+  const [dayFilter, setDayFilter] = useState('ALL');
+
+  // Advanced Registration Time Filtering
+  const [regTimeScope, setRegTimeScope] = useState('ALL'); // ALL, TODAY, THIS_WEEK, THIS_MONTH
+  const [selectedCustomDate, setSelectedCustomDate] = useState('');
 
   // Gate Form State
   const [showGateModal, setShowGateModal] = useState(false);
@@ -196,6 +202,16 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   };
 
+  const handleAdjustDate = (offset) => {
+    let baseDate = selectedCustomDate ? new Date(selectedCustomDate) : new Date();
+    if (isNaN(baseDate.getTime())) baseDate = new Date();
+
+    baseDate.setDate(baseDate.getDate() + offset);
+    const newDateStr = baseDate.toISOString().split('T')[0];
+    setSelectedCustomDate(newDateStr);
+    setRegTimeScope('CUSTOM');
+  };
+
   const handleCreateGate = async (e) => {
     e.preventDefault();
     if (!newGateName.trim()) return;
@@ -260,15 +276,54 @@ export default function AdminCommandConsole({ onNavigate }) {
     } catch (err) { alert(err.message); }
   };
 
-  const stats = useMemo(() => {
-    const total = tickets.length;
-    const checkedIn = tickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
-    const pending = tickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
-    const revoked = tickets.filter(t => t.status === 'revoked').length;
-    const manualCount = tickets.filter(t => t.is_manual).length;
+  const isInTimeScope = (createdAt, scope) => {
+    if (!createdAt || scope === 'ALL') return true;
 
-    return { total, checkedIn, pending, revoked, manualCount };
-  }, [tickets]);
+    const date = new Date(createdAt);
+    const now = new Date();
+
+    if (scope === 'TODAY') {
+      return date.toDateString() === now.toDateString();
+    }
+
+    if (scope === 'THIS_WEEK') {
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay());
+      startOfWeek.setHours(0,0,0,0);
+      return date >= startOfWeek;
+    }
+
+    if (scope === 'THIS_MONTH') {
+      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    }
+
+    if (selectedCustomDate) {
+      return date.toISOString().split('T')[0] === selectedCustomDate;
+    }
+
+    return true;
+  };
+
+  const stats = useMemo(() => {
+    const scopeTickets = tickets.filter(t => isInTimeScope(t.created_at || t.createdAt, regTimeScope));
+
+    const total = scopeTickets.length;
+    const checkedIn = scopeTickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
+    const pending = scopeTickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
+    const revoked = scopeTickets.filter(t => t.status === 'revoked').length;
+    const manualCount = scopeTickets.filter(t => t.is_manual).length;
+
+    const dayDistribution = { day1: 0, day2: 0, day3: 0 };
+    scopeTickets.forEach(t => {
+      if (t.status === 'used' || t.status === 'CHECKED_IN') {
+        dayDistribution.day1++;
+      }
+    });
+
+    const turnoutRate = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
+
+    return { total, checkedIn, pending, revoked, manualCount, dayDistribution, turnoutRate };
+  }, [tickets, regTimeScope, selectedCustomDate]);
 
   const gatekeeperAudit = useMemo(() => {
     const staffProfiles = profiles.filter(p => ['admin', 'gatekeeper', 'security'].includes(p.role));
@@ -284,6 +339,29 @@ export default function AdminCommandConsole({ onNavigate }) {
     });
   }, [profiles, tickets]);
 
+  const filteredProfiles = useMemo(() => {
+    return profiles.filter(p => {
+      const queryStr = searchTerm.toLowerCase();
+      const matchesSearch = !searchTerm ||
+        (p.full_name || '').toLowerCase().includes(queryStr) ||
+        (p.email || '').toLowerCase().includes(queryStr);
+
+      if (!matchesSearch) return false;
+
+      if (staffRoleFilter === 'STAFF') {
+        return ['admin', 'gatekeeper', 'security'].includes(p.role);
+      }
+      if (staffRoleFilter === 'ATTENDEE') {
+        return p.role === 'attendee';
+      }
+      if (staffRoleFilter === 'USER') {
+        return p.role === 'user';
+      }
+
+      return true;
+    });
+  }, [profiles, searchTerm, staffRoleFilter]);
+
   const filteredTickets = useMemo(() => {
     return tickets.filter(t => {
       const queryStr = searchTerm.toLowerCase();
@@ -297,9 +375,11 @@ export default function AdminCommandConsole({ onNavigate }) {
       if (activeFilter === 'REVOKED' && t.status !== 'revoked') return false;
       if (tierFilter !== 'ALL' && t.tier !== tierFilter) return false;
 
+      if (!isInTimeScope(t.created_at || t.createdAt, regTimeScope)) return false;
+
       return true;
     });
-  }, [tickets, searchTerm, activeFilter, tierFilter]);
+  }, [tickets, searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate]);
 
   const handleExportCsv = () => {
     if (tickets.length === 0) return;
@@ -329,7 +409,7 @@ export default function AdminCommandConsole({ onNavigate }) {
           {[
             { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
             { id: 'gates', label: 'Venue Gates', icon: MapPin },
-            { id: 'staff', label: 'Staff & Roles', icon: Shield },
+            { id: 'staff', label: 'Personnel & Roles', icon: Shield },
             { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
           ].map(tab => {
             const Icon = tab.icon;
@@ -344,6 +424,115 @@ export default function AdminCommandConsole({ onNavigate }) {
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* VIP Link Dispatcher & Timeframe Filters */}
+      <div className="space-y-6">
+        {/* VIP Invitation Link Generator */}
+        <div className="bg-white rounded-3xl border border-champagne-border p-6 shadow-sm bg-gradient-to-r from-white via-champagne-light/20 to-white">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <Crown className="w-5 h-5 text-champagne-text" />
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">VIP Link Dispatcher</h3>
+              </div>
+              <p className="text-[10px] text-slate-500 font-medium">Generate a temporary (15 min) one-time invitation link for executive delegates (+10, +15, +20 guest passes).</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
+                {[
+                  { id: 'vip_1', label: 'VIP 1 (+10)' },
+                  { id: 'vip_2', label: 'VIP 2 (+15)' },
+                  { id: 'vip_3', label: 'VIP 3 (+20)' }
+                ].map(tier => (
+                  <button
+                    key={tier.id}
+                    onClick={() => setSelectedVipTier(tier.id)}
+                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${selectedVipTier === tier.id ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {tier.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={handleGenerateVipLink}
+                disabled={isGenerating}
+                className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {isGenerating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
+                Generate VIP Link
+              </button>
+            </div>
+          </div>
+
+          {generatedVipUrl && (
+            <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-2xl animate-fadeIn space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 font-mono text-[10px] text-slate-500 truncate px-2">{generatedVipUrl}</div>
+                <button
+                  onClick={handleCopyVipLink}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+                >
+                  {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedLink ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 px-2 border-t border-slate-200/50 pt-2">
+                <Clock className="w-3 h-3 text-rose-500" />
+                <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">Self-destructs in 15 minutes. Includes allotted guest passes.</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Calendar Velocity & Timeframe Filter */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-slate-100 shadow-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest mr-2 flex items-center gap-1.5">
+                <CalendarRange className="w-3.5 h-3.5" />
+                Calendar Filter:
+            </span>
+            {[
+                { id: 'ALL', label: 'Lifetime' },
+                { id: 'TODAY', label: 'Today' },
+                { id: 'THIS_WEEK', label: 'Weekly' },
+                { id: 'THIS_MONTH', label: 'Monthly' }
+            ].map(btn => (
+                <button
+                    key={btn.id}
+                    onClick={() => { setRegTimeScope(btn.id); setSelectedCustomDate(''); }}
+                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border ${regTimeScope === btn.id ? 'bg-[#0F4A2F] text-white border-[#0F4A2F] shadow-sm' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'}`}
+                >
+                    {btn.label}
+                </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
+              <button
+                  onClick={() => handleAdjustDate(-1)}
+                  className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
+                  title="Previous Day"
+              >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <input
+                  type="date"
+                  value={selectedCustomDate}
+                  onChange={(e) => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); }}
+                  className="bg-transparent border-none text-[10px] font-bold text-slate-700 outline-none focus:ring-0 w-28"
+              />
+              <button
+                  onClick={() => handleAdjustDate(1)}
+                  className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
+                  title="Next Day"
+              >
+                  <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+          </div>
         </div>
       </div>
 
@@ -471,24 +660,46 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       )}
 
-      {/* TAB 3: STAFF & ROLES */}
+      {/* TAB 3: STAFF & PERSONNEL ROLES */}
       {activeTab === 'staff' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6 overflow-x-auto">
-          <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
+              <p className="text-[10px] text-slate-500 font-medium">Promote users to Staff/Admin or downgrade Staff to Attendee/User</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {[
+                { id: 'ALL', label: 'All Accounts' },
+                { id: 'STAFF', label: 'Staff Only' },
+                { id: 'ATTENDEE', label: 'Attendees' },
+                { id: 'USER', label: 'Unassigned Users' }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setStaffRoleFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${staffRoleFilter === f.id ? 'bg-[#0F4A2F] text-white shadow-sm' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                 <th className="p-4">Personnel</th>
-                <th className="p-4">Role</th>
+                <th className="p-4">Assigned Role</th>
                 <th className="p-4">Assigned Gate</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {profiles.length === 0 ? (
-                <tr><td colSpan="3" className="p-8 text-center text-slate-400 italic">No profiles found in database.</td></tr>
+              {filteredProfiles.length === 0 ? (
+                <tr><td colSpan="3" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
               ) : (
-                profiles.map(p => (
+                filteredProfiles.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
                     <td className="p-4">
                       <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
@@ -498,20 +709,20 @@ export default function AdminCommandConsole({ onNavigate }) {
                       <select
                         value={p.role || 'user'}
                         onChange={(e) => handleAssignRoleAndGate(p.id, e.target.value, p.assigned_gate_id)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer"
+                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer shadow-xs"
                       >
-                        <option value="user">User</option>
-                        <option value="attendee">Attendee</option>
-                        <option value="gatekeeper">Gatekeeper</option>
-                        <option value="security">Security</option>
-                        <option value="admin">Admin</option>
+                        <option value="user">USER (Unassigned)</option>
+                        <option value="attendee">ATTENDEE (Pass Holder)</option>
+                        <option value="gatekeeper">GATEKEEPER (Staff)</option>
+                        <option value="security">SECURITY (Steward)</option>
+                        <option value="admin">ADMIN (Executive)</option>
                       </select>
                     </td>
                     <td className="p-4">
                       <select
                         value={p.assigned_gate_id || ''}
                         onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer"
+                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer shadow-xs"
                       >
                         <option value="">Unassigned</option>
                         {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
