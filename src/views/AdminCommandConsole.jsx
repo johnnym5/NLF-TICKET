@@ -117,10 +117,10 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
-  // Pagination States
-  const [ticketPageSize, setTicketPageSize] = useState(100);
+  // Pagination States (always start at 10 items per page)
+  const [ticketPageSize, setTicketPageSize] = useState(10);
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
-  const [profilePageSize, setProfilePageSize] = useState(100);
+  const [profilePageSize, setProfilePageSize] = useState(10);
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
 
   // Collapsible Panel State (Always Starts Closed)
