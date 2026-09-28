@@ -174,13 +174,19 @@ export function AuthProvider({ children }) {
           profile = newProfile;
         }
 
-        // 2. Fetch User Ticket
-        let { data: ticket } = await supabase
+        setUserProfile(profile);
+        setUserRole(profile?.role || 'user');
+        setAssignedGate(profile?.gates || null);
+
+        // 2. Fetch User Ticket (Safe array check)
+        const { data: userTickets } = await supabase
           .from('tickets')
           .select('*')
           .eq('owner_id', user.id)
           .is('parent_ticket_id', null)
-          .maybeSingle();
+          .order('created_at', { ascending: false });
+
+        const ticket = (userTickets && userTickets.length > 0) ? userTickets[0] : null;
 
         if (ticket) {
           setUserTicket(ticket);
@@ -188,19 +194,21 @@ export function AuthProvider({ children }) {
           if (profile && profile.role === 'user') {
             await supabase.from('profiles').update({ role: 'attendee' }).eq('id', user.id);
             profile.role = 'attendee';
+            setUserRole('attendee');
           }
         } else {
-          // Auto-provision ticket in Supabase database if none exists yet
-          try {
-            ticket = await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
-          } catch (e) {
-            console.warn('Auto-provisioning ticket warning:', e);
+          // Auto-provision ticket ONLY if user is a regular attendee/user, NOT staff or admin
+          const roleLower = (profile?.role || 'user').toLowerCase();
+          const isStaffOrAdmin = ['admin', 'executive_admin', 'gatekeeper', 'security', 'team_member', 'director', 'tech support', 'creatives'].includes(roleLower);
+
+          if (!isStaffOrAdmin) {
+            try {
+              await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
+            } catch (e) {
+              console.warn('Auto-provisioning ticket warning:', e);
+            }
           }
         }
-
-        setUserProfile(profile);
-        setUserRole(profile?.role || 'user');
-        setAssignedGate(profile?.gates || null);
 
         // Realtime channels
         if (profileChannel) supabase.removeChannel(profileChannel);
@@ -262,23 +270,23 @@ export function AuthProvider({ children }) {
       const dbUser = user || currentUser;
       if (!dbUser) throw new Error('No active user session');
 
-      const { data: existingTicket } = await supabase
+      // Safe check using array query rather than maybeSingle to avoid PGRST116
+      const { data: existingTickets } = await supabase
         .from('tickets')
         .select('*')
         .eq('owner_id', dbUser.id)
         .is('parent_ticket_id', null)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
 
-      if (existingTicket) {
-        setUserTicket(existingTicket);
+      if (existingTickets && existingTickets.length > 0) {
+        setUserTicket(existingTickets[0]);
 
-        // Ensure role is attendee
         if (userRole === 'user') {
           await supabase.from('profiles').update({ role: 'attendee' }).eq('id', dbUser.id);
           setUserRole('attendee');
         }
 
-        return existingTicket;
+        return existingTickets[0];
       }
 
       const normalizedTier = (tier || 'general').toLowerCase().includes('vip') ?
@@ -303,8 +311,8 @@ export function AuthProvider({ children }) {
 
       if (insertErr) throw insertErr;
 
-      // Update role to attendee in profiles table
-      const isStaffOrAdmin = ['admin', 'gatekeeper', 'security', 'team_member'].includes(userRole);
+      // Update role to attendee in profiles table if regular user
+      const isStaffOrAdmin = ['admin', 'executive_admin', 'gatekeeper', 'security', 'team_member'].includes(userRole);
       if (!isStaffOrAdmin) {
         await supabase
           .from('profiles')
@@ -320,19 +328,26 @@ export function AuthProvider({ children }) {
       // Generate VIP guest tickets if VIP tier
       const plusOnes = VIP_PLUS_ONES[normalizedTier] || 0;
       if (plusOnes > 0 && insertedTicket) {
-        const guestTickets = [];
-        for (let i = 1; i <= plusOnes; i++) {
-          guestTickets.push({
-            ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
-            owner_id: dbUser.id,
-            tier: normalizedTier,
-            parent_ticket_id: insertedTicket.id,
-            is_manual: false,
-            created_by: dbUser.id,
-            status: 'valid'
-          });
+        const { data: existingGuests } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('parent_ticket_id', insertedTicket.id);
+
+        if (!existingGuests || existingGuests.length === 0) {
+          const guestTickets = [];
+          for (let i = 1; i <= plusOnes; i++) {
+            guestTickets.push({
+              ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
+              owner_id: dbUser.id,
+              tier: normalizedTier,
+              parent_ticket_id: insertedTicket.id,
+              is_manual: false,
+              created_by: dbUser.id,
+              status: 'valid'
+            });
+          }
+          await supabase.from('tickets').insert(guestTickets);
         }
-        await supabase.from('tickets').insert(guestTickets);
       }
 
       return insertedTicket;
@@ -423,8 +438,12 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     const user = data.user;
     if (user) {
+      // Auto-ensure ticket if regular user
       try {
-        await ensureUserTicket(user, user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
+        const roleLower = user.email === 'admin@livestockcarnival.ng' || user.email === 'admin@gcc.com' ? 'admin' : 'user';
+        if (roleLower === 'user') {
+          await ensureUserTicket(user, user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
+        }
       } catch (e) {
         console.warn('Login ticket ensure warning:', e);
       }

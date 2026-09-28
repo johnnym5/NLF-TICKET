@@ -721,14 +721,19 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header Bar */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+      {/* Header Bar & Dashboard Navigation Tabs */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm space-y-6">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Enterprise Box-Office Console</h1>
-          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">Multi-Gate Telemetry & Staff Auditing</p>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 uppercase tracking-tight">
+            Admin Dashboard Console
+          </h1>
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">
+            Real-Time Event Operations & Gate Control
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl">
+        {/* 4 Feature Tabs (1 line on desktop, 2x2 grid on mobile with toggle open/close) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-100 p-2 rounded-2xl">
           {[
             { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
             { id: 'gates', label: 'Venue Gates', icon: MapPin },
@@ -736,14 +741,21 @@ export default function AdminCommandConsole({ onNavigate }) {
             { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
           ].map(tab => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === tab.id ? 'bg-[#0F4A2F] text-white shadow-md' : 'text-slate-500 hover:text-slate-800'}`}
+                type="button"
+                onClick={() => setActiveTab(prev => prev === tab.id ? null : tab.id)}
+                className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-[#0F4A2F] text-white shadow-md scale-[1.02]'
+                    : 'bg-white/70 sm:bg-transparent text-slate-600 hover:text-slate-900 hover:bg-white'
+                }`}
+                title={isActive ? 'Click to close section' : `Click to open ${tab.label}`}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="truncate">{tab.label}</span>
               </button>
             );
           })}
@@ -1031,14 +1043,21 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       </div>
 
-      {/* KPI Cards (Click to Filter Tickets) */}
+      {/* KPI Cards (Click to Filter / Toggle Tickets Section) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div
-          onClick={() => { setActiveTab('tickets'); setActiveFilter('ALL'); }}
+          onClick={() => {
+            if (activeTab === 'tickets' && activeFilter === 'ALL') {
+              setActiveTab(null);
+            } else {
+              setActiveTab('tickets');
+              setActiveFilter('ALL');
+            }
+          }}
           className={`premium-card p-6 flex flex-col justify-between h-32 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
             activeTab === 'tickets' && activeFilter === 'ALL' ? 'ring-2 ring-slate-900 shadow-md' : ''
           }`}
-          title="Click to view all tickets"
+          title={activeTab === 'tickets' && activeFilter === 'ALL' ? 'Click to close section' : 'Click to view all tickets'}
         >
           <span className="text-[10px] font-black uppercase text-slate-400">Total Issued Tickets</span>
           <p className="text-3xl font-black text-slate-900">{stats.total}</p>
@@ -1046,11 +1065,18 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
 
         <div
-          onClick={() => { setActiveTab('tickets'); setActiveFilter('CHECKED_IN'); }}
+          onClick={() => {
+            if (activeTab === 'tickets' && activeFilter === 'CHECKED_IN') {
+              setActiveTab(null);
+            } else {
+              setActiveTab('tickets');
+              setActiveFilter('CHECKED_IN');
+            }
+          }}
           className={`premium-card p-6 flex flex-col justify-between h-32 bg-emerald-50 border-emerald-200 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
             activeTab === 'tickets' && activeFilter === 'CHECKED_IN' ? 'ring-2 ring-emerald-600 shadow-md' : ''
           }`}
-          title="Click to view Checked In passes"
+          title={activeTab === 'tickets' && activeFilter === 'CHECKED_IN' ? 'Click to close section' : 'Click to view Checked In passes'}
         >
           <span className="text-[10px] font-black uppercase text-emerald-700">Checked In (Used)</span>
           <p className="text-3xl font-black text-emerald-950">{stats.checkedIn}</p>
@@ -1058,11 +1084,18 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
 
         <div
-          onClick={() => { setActiveTab('tickets'); setActiveFilter('PENDING'); }}
+          onClick={() => {
+            if (activeTab === 'tickets' && activeFilter === 'PENDING') {
+              setActiveTab(null);
+            } else {
+              setActiveTab('tickets');
+              setActiveFilter('PENDING');
+            }
+          }}
           className={`premium-card p-6 flex flex-col justify-between h-32 bg-amber-50 border-amber-200 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
             activeTab === 'tickets' && activeFilter === 'PENDING' ? 'ring-2 ring-amber-500 shadow-md' : ''
           }`}
-          title="Click to view Pending Valid passes"
+          title={activeTab === 'tickets' && activeFilter === 'PENDING' ? 'Click to close section' : 'Click to view Pending Valid passes'}
         >
           <span className="text-[10px] font-black uppercase text-amber-700">Pending Valid Passes</span>
           <p className="text-3xl font-black text-amber-950">{stats.pending}</p>
@@ -1070,13 +1103,20 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
 
         <div
-          onClick={() => { setActiveTab('tickets'); setActiveFilter('MANUAL'); }}
+          onClick={() => {
+            if (activeTab === 'tickets' && activeFilter === 'MANUAL') {
+              setActiveTab(null);
+            } else {
+              setActiveTab('tickets');
+              setActiveFilter('MANUAL');
+            }
+          }}
           className={`premium-card p-6 flex flex-col justify-between h-32 bg-slate-900 text-white cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
             activeTab === 'tickets' && activeFilter === 'MANUAL' ? 'ring-2 ring-amber-400 shadow-md' : ''
           }`}
-          title="Click to view Box-Office Manual tickets"
+          title={activeTab === 'tickets' && activeFilter === 'MANUAL' ? 'Click to close section' : 'Click to view Manual Gate tickets'}
         >
-          <span className="text-[10px] font-black uppercase text-slate-400">Box-Office Manual Tickets</span>
+          <span className="text-[10px] font-black uppercase text-slate-400">Manual Gate Tickets</span>
           <p className="text-3xl font-black text-amber-400">{stats.manualCount}</p>
           <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers (Click to Filter)</span>
         </div>
