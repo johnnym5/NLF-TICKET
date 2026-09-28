@@ -4,6 +4,11 @@ import { supabase } from '../lib/supabase';
 const AuthContext = createContext();
 
 export const TIER_WRISTBANDS = {
+  general: 'Emerald Green',
+  vip_1: 'Metallic Silver Foil',
+  vip_2: 'Champagne Gold Foil',
+  vip_3: 'Obsidian Platinum Badge',
+  // Backward compatibility keys
   REGULAR: 'Emerald Green',
   VIP_SILVER: 'Metallic Silver Foil',
   VIP_GOLD: 'Champagne Gold Foil',
@@ -14,6 +19,11 @@ export const TIER_WRISTBANDS = {
 };
 
 export const TIER_LABELS = {
+  general: 'General Admission Pass',
+  vip_1: 'VIP Tier 1 (+10 Guests)',
+  vip_2: 'VIP Tier 2 (+15 Guests)',
+  vip_3: 'VIP Tier 3 (+20 Guests)',
+  // Backward compatibility keys
   REGULAR: 'General Entry',
   VIP_SILVER: 'Silver Delegate VIP',
   VIP_GOLD: 'Gold Dignitary VIP',
@@ -23,8 +33,15 @@ export const TIER_LABELS = {
   ASSOCIATE: 'Partner Associate'
 };
 
+export const VIP_PLUS_ONES = {
+  vip_1: 10,
+  vip_2: 15,
+  vip_3: 20,
+  general: 0
+};
+
 // High-entropy, collision-resistant code generator
-export function generateTicketCode(tier = 'REGULAR') {
+export function generateTicketCode(tier = 'general') {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let entropy = '';
   if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
@@ -40,6 +57,9 @@ export function generateTicketCode(tier = 'REGULAR') {
   }
 
   const prefixMap = {
+    'vip_1': 'GCC-VIP1-',
+    'vip_2': 'GCC-VIP2-',
+    'vip_3': 'GCC-VIP3-',
     'VIP_SILVER': 'GCC-VIP-SLVR-',
     'VIP_GOLD': 'GCC-VIP-GOLD-',
     'VIP_PLATINUM': 'GCC-VIP-PLAT-',
@@ -53,12 +73,15 @@ export function generateTicketCode(tier = 'REGULAR') {
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
-  const [attendeeRecord, setAttendeeRecord] = useState(null);
-  const [userRole, setUserRole] = useState('attendee');
+  const [userProfile, setUserProfile] = useState(null);
+  const [userRole, setUserRole] = useState('user'); // admin, gatekeeper, security, attendee, user
+  const [userTicket, setUserTicket] = useState(null);
+  const [assignedGate, setAssignedGate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isNewRegistration, setIsNewRegistration] = useState(false);
 
   useEffect(() => {
+    let profileChannel = null;
     let ticketChannel = null;
 
     const setupAuth = async () => {
@@ -76,10 +99,9 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
 
       if (user) {
-        await fetchAndSubscribeAttendee(user);
+        await loadUserData(user);
       } else {
-        setAttendeeRecord(null);
-        setUserRole('attendee');
+        clearUserState();
         setLoading(false);
       }
     };
@@ -89,7 +111,6 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const user = session?.user || null;
 
-      // Close popup if this window is the OAuth popup
       if (user && window.opener && window.name === 'GoogleSignInPopup') {
         window.close();
         return;
@@ -98,152 +119,184 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
 
       if (user) {
-        await fetchAndSubscribeAttendee(user);
+        await loadUserData(user);
       } else {
-        setAttendeeRecord(null);
-        setUserRole('attendee');
+        clearUserState();
         setLoading(false);
+        if (profileChannel) supabase.removeChannel(profileChannel);
         if (ticketChannel) supabase.removeChannel(ticketChannel);
       }
     });
 
-    const fetchAndSubscribeAttendee = async (user) => {
+    const loadUserData = async (user) => {
       try {
-        const { data, error } = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('uid', user.id)
+        // 1. Fetch Profile with gate details
+        let { data: profile } = await supabase
+          .from('profiles')
+          .select('*, gates(*)')
+          .eq('id', user.id)
           .maybeSingle();
 
-        if (data) {
-          setAttendeeRecord(data);
-          deriveAndSetRole(user, data);
-          localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(data));
-        } else {
-          deriveAndSetRole(user, null);
-          const cached = localStorage.getItem(`gcc_attendee_${user.id}`);
-          if (cached) setAttendeeRecord(JSON.parse(cached));
+        if (!profile) {
+          const derivedRole = user.email === 'admin@gcc.com' ? 'admin' :
+                            user.email?.startsWith('qrscanner') ? 'gatekeeper' : 'user';
+
+          const { data: newProfile } = await supabase
+            .from('profiles')
+            .upsert({
+              id: user.id,
+              email: user.email,
+              full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+              role: derivedRole
+            })
+            .select('*, gates(*)')
+            .single();
+
+          profile = newProfile;
         }
 
-        // Subscribe to real-time changes on tickets table for current user
-        if (ticketChannel) supabase.removeChannel(ticketChannel);
-        ticketChannel = supabase
-          .channel(`ticket_user_${user.id}`)
+        setUserProfile(profile);
+        setUserRole(profile?.role || 'user');
+        setAssignedGate(profile?.gates || null);
+
+        // 2. Fetch User Ticket
+        const { data: ticket } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('owner_id', user.id)
+          .is('parent_ticket_id', null)
+          .maybeSingle();
+
+        if (ticket) {
+          setUserTicket(ticket);
+        }
+
+        // Setup realtime listeners
+        if (profileChannel) supabase.removeChannel(profileChannel);
+        profileChannel = supabase
+          .channel(`profile_${user.id}`)
           .on(
             'postgres_changes',
-            { event: '*', schema: 'public', table: 'tickets', filter: `uid=eq.${user.id}` },
-            (payload) => {
-              if (payload.new) {
-                setAttendeeRecord(payload.new);
-                deriveAndSetRole(user, payload.new);
-                localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(payload.new));
+            { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+            async () => {
+              const { data: updated } = await supabase
+                .from('profiles')
+                .select('*, gates(*)')
+                .eq('id', user.id)
+                .single();
+              if (updated) {
+                setUserProfile(updated);
+                setUserRole(updated.role);
+                setAssignedGate(updated.gates || null);
               }
             }
           )
           .subscribe();
 
+        if (ticketChannel) supabase.removeChannel(ticketChannel);
+        ticketChannel = supabase
+          .channel(`ticket_owner_${user.id}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'tickets', filter: `owner_id=eq.${user.id}` },
+            (payload) => {
+              if (payload.new) setUserTicket(payload.new);
+            }
+          )
+          .subscribe();
+
       } catch (err) {
-        console.warn('Supabase ticket fetch warning:', err);
-        const cached = localStorage.getItem(`gcc_attendee_${user.id}`);
-        if (cached) setAttendeeRecord(JSON.parse(cached));
+        console.warn('Error loading user data:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    const deriveAndSetRole = (user, record) => {
-      if (record?.role) {
-        setUserRole(record.role);
-      } else {
-        let derivedRole = 'attendee';
-        if (user.email === 'admin@gcc.com') derivedRole = 'executive_admin';
-        else if (user.email?.startsWith('qrscanner')) derivedRole = 'gatekeeper';
-        setUserRole(derivedRole);
-      }
+    const clearUserState = () => {
+      setUserProfile(null);
+      setUserRole('user');
+      setUserTicket(null);
+      setAssignedGate(null);
     };
 
     return () => {
       subscription.unsubscribe();
+      if (profileChannel) supabase.removeChannel(profileChannel);
       if (ticketChannel) supabase.removeChannel(ticketChannel);
     };
   }, []);
 
-  const ensureAttendeeDoc = async (user, fullName, invitationId = null) => {
+  const ensureUserTicket = async (user, fullName, tier = 'general', invitationId = null) => {
     try {
-      const { data: existingDoc } = await supabase
+      const dbUser = user || currentUser;
+      if (!dbUser) throw new Error('No active user session');
+
+      const { data: existingTicket } = await supabase
         .from('tickets')
         .select('*')
-        .eq('uid', user.id)
+        .eq('owner_id', dbUser.id)
+        .is('parent_ticket_id', null)
         .maybeSingle();
 
-      if (!existingDoc) {
-        let tier = 'REGULAR';
-        if (invitationId) {
-          const { data: invData } = await supabase
-            .from('vip_invitations')
-            .select('*')
-            .eq('id', invitationId)
-            .maybeSingle();
-
-          if (invData) {
-            const now = new Date();
-            const expiresAt = new Date(invData.expiresAt);
-            if (expiresAt > now && !invData.isUsed) {
-              tier = invData.tier || 'REGULAR';
-              await supabase
-                .from('vip_invitations')
-                .update({ isUsed: true, usedBy: user.id })
-                .eq('id', invitationId);
-            }
-          }
-        }
-
-        const ticketCode = generateTicketCode(tier);
-        const wristbandColor = TIER_WRISTBANDS[tier] || TIER_WRISTBANDS.REGULAR;
-
-        const newRecord = {
-          uid: user.id,
-          fullName: fullName || user.user_metadata?.full_name || user.displayName || 'Attendee',
-          email: user.email,
-          ticketCode,
-          tier,
-          wristbandColor,
-          status: 'REGISTERED',
-          accessRevoked: false,
-          daysAttended: { day1: false, day2: false, day3: false },
-          checkedInAt: null,
-          checkedInFullDate: null,
-          checkedInBy: null,
-          referralSource: invitationId ? 'vip_invitation' : 'direct',
-          role: 'attendee',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        const { data: inserted, error: insertError } = await supabase
-          .from('tickets')
-          .insert(newRecord)
-          .select('*')
-          .single();
-
-        if (insertError) {
-          console.error('Error inserting ticket:', insertError);
-          throw insertError;
-        }
-
-        const finalRecord = inserted || newRecord;
-        setAttendeeRecord(finalRecord);
-        localStorage.setItem(`gcc_attendee_${user.id}`, JSON.stringify(finalRecord));
-        setIsNewRegistration(true);
-
-        return finalRecord;
-      } else {
-        setAttendeeRecord(existingDoc);
-        return existingDoc;
+      if (existingTicket) {
+        setUserTicket(existingTicket);
+        return existingTicket;
       }
+
+      const normalizedTier = (tier || 'general').toLowerCase().includes('vip') ?
+        (tier === 'VIP_SILVER' ? 'vip_1' : tier === 'VIP_GOLD' ? 'vip_2' : tier === 'VIP_PLATINUM' ? 'vip_3' : tier.toLowerCase()) : 'general';
+
+      const ticketCode = generateTicketCode(normalizedTier);
+
+      const newTicket = {
+        ticket_code: ticketCode,
+        owner_id: dbUser.id,
+        tier: normalizedTier,
+        is_manual: false,
+        created_by: dbUser.id,
+        status: 'valid'
+      };
+
+      const { data: insertedTicket, error: insertErr } = await supabase
+        .from('tickets')
+        .insert(newTicket)
+        .select('*')
+        .single();
+
+      if (insertErr) throw insertErr;
+
+      // Update role to attendee in profile
+      await supabase
+        .from('profiles')
+        .update({ role: 'attendee' })
+        .eq('id', dbUser.id);
+
+      setUserRole('attendee');
+      setUserTicket(insertedTicket);
+      setIsNewRegistration(true);
+
+      // Generate VIP guest tickets if VIP tier
+      const plusOnes = VIP_PLUS_ONES[normalizedTier] || 0;
+      if (plusOnes > 0 && insertedTicket) {
+        const guestTickets = [];
+        for (let i = 1; i <= plusOnes; i++) {
+          guestTickets.push({
+            ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
+            owner_id: dbUser.id,
+            tier: normalizedTier,
+            parent_ticket_id: insertedTicket.id,
+            is_manual: false,
+            created_by: dbUser.id,
+            status: 'valid'
+          });
+        }
+        await supabase.from('tickets').insert(guestTickets);
+      }
+
+      return insertedTicket;
     } catch (err) {
-      console.error('Registration failed:', err);
-      throw new Error('Verification service unavailable. Please check your connection.');
+      console.error('ensureUserTicket failed:', err);
+      throw err;
     }
   };
 
@@ -273,7 +326,6 @@ export function AuthProvider({ children }) {
       );
 
       if (!popup) {
-        // Fallback if popup is blocked by browser settings
         window.location.href = data.url;
         return data;
       }
@@ -286,7 +338,7 @@ export function AuthProvider({ children }) {
               const { data: { session } } = await supabase.auth.getSession();
               if (session?.user) {
                 if (invitationId) {
-                  await ensureAttendeeDoc(session.user, session.user.user_metadata?.full_name, invitationId);
+                  await ensureUserTicket(session.user, session.user.user_metadata?.full_name, 'general', invitationId);
                 }
                 resolve(session.user);
               } else {
@@ -294,7 +346,7 @@ export function AuthProvider({ children }) {
               }
             }
           } catch (e) {
-            // Ignore cross-origin popup errors while user is authenticating on Google
+            // Ignore cross-origin popup errors
           }
         }, 500);
       });
@@ -317,7 +369,7 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     const user = data.user;
     if (user) {
-      await ensureAttendeeDoc(user, fullName, invitationId);
+      await ensureUserTicket(user, fullName, 'general', invitationId);
     }
     return user;
   };
@@ -334,17 +386,38 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     await supabase.auth.signOut();
-    setAttendeeRecord(null);
+    setCurrentUser(null);
+    setUserProfile(null);
+    setUserRole('user');
+    setUserTicket(null);
+    setAssignedGate(null);
     setIsNewRegistration(false);
-    setUserRole('attendee');
   };
+
+  // Backward compatibility object for legacy components
+  const attendeeRecord = userTicket ? {
+    id: userTicket.id,
+    uid: userTicket.owner_id,
+    fullName: userProfile?.full_name || currentUser?.email || 'Attendee',
+    email: userProfile?.email || currentUser?.email,
+    ticketCode: userTicket.ticket_code,
+    tier: userTicket.tier,
+    wristbandColor: TIER_WRISTBANDS[userTicket.tier] || 'Emerald Green',
+    status: userTicket.status === 'valid' ? 'REGISTERED' : userTicket.status === 'used' ? 'CHECKED_IN' : 'REVOKED',
+    accessRevoked: userTicket.status === 'revoked',
+    createdAt: userTicket.created_at,
+    role: userRole
+  } : null;
 
   return (
     <AuthContext.Provider
       value={{
         currentUser,
-        attendeeRecord,
+        userProfile,
         userRole,
+        userTicket,
+        assignedGate,
+        attendeeRecord,
         loading,
         isNewRegistration,
         setIsNewRegistration,
@@ -352,7 +425,8 @@ export function AuthProvider({ children }) {
         registerWithEmail,
         loginWithEmail,
         logout,
-        ensureAttendeeDoc,
+        ensureUserTicket,
+        ensureAttendeeDoc: ensureUserTicket
       }}
     >
       {children}

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { Lock, Mail, KeyRound, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
 import Button from './ui/Button';
 import Input from './ui/Input';
 
-export default function StaffLogin({ title, subtitle, allowedEmails, onSuccess }) {
+export default function StaffLogin({ title, subtitle, allowedEmails = [], onSuccess }) {
   const { loginWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,7 +19,18 @@ export default function StaffLogin({ title, subtitle, allowedEmails, onSuccess }
 
     try {
       const user = await loginWithEmail(email.trim(), password);
-      const isAllowed = allowedEmails.some(pattern => {
+
+      // Fetch user role from profiles table
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const role = profile?.role || 'user';
+      const isStaffRole = ['admin', 'gatekeeper', 'security'].includes(role);
+
+      const isAllowedEmail = allowedEmails.some(pattern => {
         if (pattern.includes('*')) {
           const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
           return regex.test(user.email);
@@ -26,13 +38,14 @@ export default function StaffLogin({ title, subtitle, allowedEmails, onSuccess }
         return user.email === pattern;
       });
 
-      if (isAllowed) {
+      if (isStaffRole || isAllowedEmail || user.email === 'admin@gcc.com') {
         if (onSuccess) onSuccess(user);
       } else {
-        setError('Unauthorized Access Denied.');
+        setError('Unauthorized Access Denied. Staff credentials required.');
       }
     } catch (err) {
-      setError('Invalid staff credentials.');
+      console.error('Staff login error:', err);
+      setError('Invalid staff credentials or password.');
     } finally {
       setLoading(false);
     }
