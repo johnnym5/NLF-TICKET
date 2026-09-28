@@ -16,7 +16,7 @@ import {
   Sparkles
 } from 'lucide-react';
 
-export default function FestivalInfoModal({ isOpen, onClose, onRegister }) {
+export default function FestivalInfoModal({ isOpen, onClose, onRegister, onOpenSchedule }) {
   if (!isOpen) return null;
 
   return (
@@ -58,13 +58,16 @@ export default function FestivalInfoModal({ isOpen, onClose, onRegister }) {
         <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-8 custom-scrollbar">
           {/* Quick Metadata Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
-              <div className="w-8 h-8 rounded-xl bg-[#EBF3EE] flex items-center justify-center text-[#0F4A2F]">
+            <div
+              onClick={() => { if (onOpenSchedule) onOpenSchedule(); }}
+              className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-slate-100 shadow-sm hover:border-[#B8D8C5] transition-all cursor-pointer group"
+            >
+              <div className="w-8 h-8 rounded-xl bg-[#EBF3EE] flex items-center justify-center text-[#0F4A2F] group-hover:bg-[#0F4A2F] group-hover:text-white transition-colors">
                 <Calendar className="w-4 h-4" />
               </div>
               <div className="text-left">
-                <p className="text-[10px] font-bold text-slate-400 uppercase">Date</p>
-                <p className="text-xs font-black text-slate-700">21 - 23 Nov 2026</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Date & Schedule</p>
+                <p className="text-xs font-black text-slate-700 group-hover:text-[#0F4A2F]">21 - 23 Nov 2026</p>
               </div>
             </div>
 

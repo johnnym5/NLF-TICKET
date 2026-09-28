@@ -24,14 +24,8 @@ import EventScheduleModal from '../components/EventScheduleModal';
 
 export function getRoundTicketCount(count) {
   const num = Number(count) || 0;
-  if (num <= 10) return "10+";
-  if (num <= 50) return `${Math.floor(num / 10) * 10}+`;
-  if (num <= 100) return `${Math.floor(num / 10) * 10}+`;
-  if (num <= 250) return `${Math.floor(num / 50) * 50}+`;
-  if (num <= 500) return `${Math.floor(num / 50) * 50}+`;
-  if (num <= 1000) return `${Math.floor(num / 100) * 100}+`;
-  if (num <= 5000) return `${Math.floor(num / 500) * 500}+`;
-  return `${Math.floor(num / 1000) * 1000}+`;
+  if (num === 0) return "10+";
+  return `${num}`;
 }
 
 export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
