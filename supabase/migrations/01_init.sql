@@ -135,10 +135,6 @@ CREATE POLICY "Allow ALL profiles"
 
 -- Tickets RLS Policies
 DROP POLICY IF EXISTS "Allow ALL tickets" ON public.tickets;
-DROP POLICY IF EXISTS "Allow SELECT tickets" ON public.tickets;
-DROP POLICY IF EXISTS "Allow INSERT tickets" ON public.tickets;
-DROP POLICY IF EXISTS "Allow UPDATE tickets" ON public.tickets;
-
 CREATE POLICY "Allow ALL tickets"
   ON public.tickets FOR ALL
   TO authenticated, anon
@@ -166,17 +162,20 @@ BEGIN
   ON CONFLICT (id) DO UPDATE
   SET email = EXCLUDED.email,
       full_name = EXCLUDED.full_name;
-  -- Auto-generate default ticket if attendee/user and no ticket exists
-  IF NOT EXISTS (SELECT 1 FROM public.tickets WHERE owner_id = NEW.id AND parent_ticket_id IS NULL) THEN
-    INSERT INTO public.tickets (ticket_code, owner_id, tier, status, is_manual, created_by)
-    VALUES (
-      'GCC-2026-' || UPPER(SUBSTRING(MD5(RANDOM()::TEXT) FROM 1 FOR 6)),
-      NEW.id,
-      'general',
-      'valid',
-      FALSE,
-      NEW.id
-    );
+
+  -- Auto-generate default ticket ONLY for non-admin and non-staff regular users
+  IF LOWER(NEW.email) NOT IN ('admin@livestockcarnival.ng', 'admin@gcc.com') AND LOWER(NEW.email) NOT LIKE 'qrscanner%' THEN
+    IF NOT EXISTS (SELECT 1 FROM public.tickets WHERE owner_id = NEW.id) THEN
+      INSERT INTO public.tickets (ticket_code, owner_id, tier, status, is_manual, created_by)
+      VALUES (
+        'GCC-2026-' || UPPER(SUBSTRING(MD5(RANDOM()::TEXT) FROM 1 FOR 6)),
+        NEW.id,
+        'general',
+        'valid',
+        FALSE,
+        NEW.id
+      );
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -188,7 +187,23 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 7. Atomic Checkin PL/pgSQL RPC Stored Procedure
+-- 7. SECURITY DEFINER Stored Procedure to Purge Admin Passes
+CREATE OR REPLACE FUNCTION public.purge_admin_tickets()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  DELETE FROM public.tickets
+  WHERE owner_id IN (
+    SELECT id FROM public.profiles
+    WHERE LOWER(role) IN ('admin', 'executive_admin')
+       OR LOWER(email) IN ('admin@livestockcarnival.ng', 'admin@gcc.com')
+  );
+END;
+$$;
+
+-- 8. Atomic Checkin PL/pgSQL RPC Stored Procedure
 CREATE OR REPLACE FUNCTION public.atomic_checkin(
   p_ticket_code TEXT,
   p_gate_id UUID
@@ -268,7 +283,7 @@ BEGIN
 END;
 $$;
 
--- 8. Sync Scan Event RPC
+-- 9. Sync Scan Event RPC
 CREATE OR REPLACE FUNCTION public.sync_scan_event(
   p_operation_id TEXT,
   p_ticket_id TEXT,
