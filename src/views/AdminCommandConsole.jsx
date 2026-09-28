@@ -116,6 +116,9 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
+  // Collapsible Panel State (Always Starts Closed)
+  const [isRolesPanelOpen, setIsRolesPanelOpen] = useState(false);
+
   // Advanced Registration Time Filtering
   const [regTimeScope, setRegTimeScope] = useState('ALL');
   const [selectedCustomDate, setSelectedCustomDate] = useState('');
@@ -684,135 +687,162 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       </div>
 
-      {/* DYNAMIC ROLE & GROUP MANAGER + WRISTBAND CONFIGURATOR */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-[#0F4A2F] flex items-center justify-center">
-              <FolderPlus className="w-4 h-4" />
+      {/* DYNAMIC ROLE & GROUP MANAGER + WRISTBAND CONFIGURATOR (Collapsible - Always Starts Closed) */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
+        <button
+          type="button"
+          onClick={() => setIsRolesPanelOpen(!isRolesPanelOpen)}
+          className="w-full p-6 text-left flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-[#0F4A2F] flex items-center justify-center shrink-0">
+              <FolderPlus className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-black uppercase text-slate-900">Custom Roles, Groups & Wristband Manager</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Create unlimited custom roles under Staff or Attendees (e.g. Director, Tech Support, Creatives, Vendors, Exhibitors)</p>
+              <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-2">
+                Custom Roles, Groups & Wristband Manager
+                <Badge variant="pending" className="text-[9px] uppercase">Configurator</Badge>
+              </h3>
+              <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                Click to expand custom role creator, group category management, and physical wristband color allocators
+              </p>
             </div>
           </div>
 
-          <Button icon={UserPlus2} onClick={() => { setShowAddUserModal(true); setAddUserModalTab('DETAILS'); }}>
-            ADD USER
-          </Button>
-        </div>
+          <div className="flex items-center gap-3">
+            <Button
+              size="sm"
+              icon={UserPlus2}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAddUserModal(true);
+                setAddUserModalTab('DETAILS');
+              }}
+            >
+              ADD USER
+            </Button>
 
-        {/* Live Wristband Color Customizer */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-black uppercase text-slate-900 flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                Select Role to Color-Code
-              </h4>
-
-              <select
-                value={selectedRoleForColor}
-                onChange={(e) => {
-                  setSelectedRoleForColor(e.target.value);
-                  const roleObj = customRoles.find(r => r.name.toLowerCase() === e.target.value.toLowerCase());
-                  if (roleObj) {
-                    setCustomColorName(roleObj.wristband_color || 'Emerald Green');
-                    setCustomColorHex(roleObj.wristband_hex || '#0F4A2F');
-                  }
-                }}
-                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black uppercase cursor-pointer"
-              >
-                {customRoles.map(r => (
-                  <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} ({r.category.toUpperCase()})</option>
-                ))}
-              </select>
+            <div className="p-2 bg-slate-100 rounded-xl text-slate-500 transition-transform duration-200">
+              <ChevronDown className={`w-5 h-5 transition-transform duration-200 ${isRolesPanelOpen ? 'rotate-180' : ''}`} />
             </div>
+          </div>
+        </button>
 
-            <div>
-              <label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Preset Wristband Colors</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {COLOR_PRESETS.map(preset => (
-                  <button
-                    key={preset.name}
-                    onClick={() => { setCustomColorName(preset.name); setCustomColorHex(preset.hex); }}
-                    className="p-2 bg-white rounded-xl border border-slate-200 hover:border-slate-400 flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer"
+        {isRolesPanelOpen && (
+          <div className="p-6 pt-0 border-t border-slate-100 space-y-6 animate-fadeIn">
+            {/* Live Wristband Color Customizer */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+              <div className="space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase text-slate-900 flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    Select Role to Color-Code
+                  </h4>
+
+                  <select
+                    value={selectedRoleForColor}
+                    onChange={(e) => {
+                      setSelectedRoleForColor(e.target.value);
+                      const roleObj = customRoles.find(r => r.name.toLowerCase() === e.target.value.toLowerCase());
+                      if (roleObj) {
+                        setCustomColorName(roleObj.wristband_color || 'Emerald Green');
+                        setCustomColorHex(roleObj.wristband_hex || '#0F4A2F');
+                      }
+                    }}
+                    className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black uppercase cursor-pointer"
                   >
-                    <span className="w-5 h-5 rounded-full border shadow-xs" style={{ backgroundColor: preset.hex }} />
-                    <span className="text-[9px] font-bold text-slate-700 leading-tight">{preset.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <Input
-                label="Wristband Color Name"
-                value={customColorName}
-                onChange={(e) => setCustomColorName(e.target.value)}
-              />
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={customColorHex}
-                    onChange={(e) => setCustomColorHex(e.target.value)}
-                    className="w-10 h-10 rounded-xl cursor-pointer border p-0.5"
-                  />
-                  <input
-                    type="text"
-                    value={customColorHex}
-                    onChange={(e) => setCustomColorHex(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl font-mono text-xs font-bold"
-                  />
+                    {customRoles.map(r => (
+                      <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} ({r.category.toUpperCase()})</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-            </div>
 
-            <button
-              onClick={handleSaveWristbandColor}
-              className="w-full py-2.5 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center justify-center gap-2"
-            >
-              {savedColorNotice ? <Check className="w-3.5 h-3.5" /> : <Palette className="w-3.5 h-3.5" />}
-              {savedColorNotice ? 'Color Saved to Role!' : 'Save Wristband Color for Role'}
-            </button>
-          </div>
-
-          {/* Live Physical Wristband Strip Rendering */}
-          <div className="space-y-3">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">Physical Wristband Band Preview</span>
-
-            <div
-              className="p-6 rounded-2xl text-white shadow-lg space-y-4 relative overflow-hidden transition-all flex flex-col justify-between h-48"
-              style={{ backgroundColor: customColorHex }}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <img src="/logo.jpeg" alt="NLF Logo" className="w-8 h-8 rounded-lg border border-white/30" />
-                  <div>
-                    <span className="font-black text-xs uppercase tracking-tight block">NLF 2026 CARNIVAL</span>
-                    <span className="text-[8px] font-black uppercase opacity-80 block tracking-widest">OFFICIAL GATE WRISTBAND</span>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Preset Wristband Colors</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {COLOR_PRESETS.map(preset => (
+                      <button
+                        key={preset.name}
+                        onClick={() => { setCustomColorName(preset.name); setCustomColorHex(preset.hex); }}
+                        className="p-2 bg-white rounded-xl border border-slate-200 hover:border-slate-400 flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer"
+                      >
+                        <span className="w-5 h-5 rounded-full border shadow-xs" style={{ backgroundColor: preset.hex }} />
+                        <span className="text-[9px] font-bold text-slate-700 leading-tight">{preset.name}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/30">
-                  {selectedRoleForColor.toUpperCase()}
-                </span>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <Input
+                    label="Wristband Color Name"
+                    value={customColorName}
+                    onChange={(e) => setCustomColorName(e.target.value)}
+                  />
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={customColorHex}
+                        onChange={(e) => setCustomColorHex(e.target.value)}
+                        className="w-10 h-10 rounded-xl cursor-pointer border p-0.5"
+                      />
+                      <input
+                        type="text"
+                        value={customColorHex}
+                        onChange={(e) => setCustomColorHex(e.target.value)}
+                        className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl font-mono text-xs font-bold"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSaveWristbandColor}
+                  className="w-full py-2.5 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center justify-center gap-2"
+                >
+                  {savedColorNotice ? <Check className="w-3.5 h-3.5" /> : <Palette className="w-3.5 h-3.5" />}
+                  {savedColorNotice ? 'Color Saved to Role!' : 'Save Wristband Color for Role'}
+                </button>
               </div>
 
-              <div className="border-t border-white/20 pt-3 flex items-end justify-between">
-                <div>
-                  <span className="text-[9px] font-black uppercase opacity-75 block">Band Color Designation</span>
-                  <p className="text-base font-black uppercase tracking-wide">{customColorName}</p>
-                </div>
-                <div className="font-mono text-xs font-black tracking-widest bg-black/30 px-3 py-1 rounded-lg">
-                  GCC-2026-BAND
+              {/* Live Physical Wristband Strip Rendering */}
+              <div className="space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">Physical Wristband Band Preview</span>
+
+                <div
+                  className="p-6 rounded-2xl text-white shadow-lg space-y-4 relative overflow-hidden transition-all flex flex-col justify-between h-48"
+                  style={{ backgroundColor: customColorHex }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <img src="/logo.jpeg" alt="NLF Logo" className="w-8 h-8 rounded-lg border border-white/30" />
+                      <div>
+                        <span className="font-black text-xs uppercase tracking-tight block">NLF 2026 CARNIVAL</span>
+                        <span className="text-[8px] font-black uppercase opacity-80 block tracking-widest">OFFICIAL GATE WRISTBAND</span>
+                      </div>
+                    </div>
+
+                    <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/30">
+                      {selectedRoleForColor.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="border-t border-white/20 pt-3 flex items-end justify-between">
+                    <div>
+                      <span className="text-[9px] font-black uppercase opacity-75 block">Band Color Designation</span>
+                      <p className="text-base font-black uppercase tracking-wide">{customColorName}</p>
+                    </div>
+                    <div className="font-mono text-xs font-black tracking-widest bg-black/30 px-3 py-1 rounded-lg">
+                      GCC-2026-BAND
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* VIP Link Dispatcher & Timeframe Filters */}
