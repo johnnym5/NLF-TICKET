@@ -134,22 +134,13 @@ CREATE POLICY "Allow ALL profiles"
   WITH CHECK (true);
 
 -- Tickets RLS Policies
+DROP POLICY IF EXISTS "Allow ALL tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow SELECT tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow INSERT tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow UPDATE tickets" ON public.tickets;
 
-CREATE POLICY "Allow SELECT tickets"
-  ON public.tickets FOR SELECT
-  TO authenticated, anon
-  USING (true);
-
-CREATE POLICY "Allow INSERT tickets"
-  ON public.tickets FOR INSERT
-  TO authenticated, anon
-  WITH CHECK (true);
-
-CREATE POLICY "Allow UPDATE tickets"
-  ON public.tickets FOR UPDATE
+CREATE POLICY "Allow ALL tickets"
+  ON public.tickets FOR ALL
   TO authenticated, anon
   USING (true)
   WITH CHECK (true);

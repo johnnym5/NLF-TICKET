@@ -356,12 +356,33 @@ export default function AdminCommandConsole({ onNavigate }) {
   };
 
   const handleDeleteProfile = async (profileId) => {
-    if (!window.confirm('Remove this user profile?')) return;
+    const target = profiles.find(p => p.id === profileId);
+    const name = target?.full_name || 'User';
+    if (!window.confirm(`Are you sure you want to permanently delete user "${name}" and ALL their associated tickets and details from the database?`)) return;
+
     try {
-      await supabase.from('profiles').delete().eq('id', profileId);
+      await supabase.from('tickets').delete().eq('owner_id', profileId);
+      const { error } = await supabase.from('profiles').delete().eq('id', profileId);
+      if (error) throw error;
+
       setProfiles(prev => prev.filter(p => p.id !== profileId));
+      setTickets(prev => prev.filter(t => t.owner_id !== profileId));
     } catch (err) {
-      alert(err.message);
+      alert('Failed to delete user: ' + err.message);
+    }
+  };
+
+  const handleDeleteTicket = async (ticket) => {
+    const code = ticket.ticket_code || ticket.ticketCode;
+    if (!window.confirm(`Are you sure you want to permanently delete ticket ${code}? This will clear all ticket details from the database.`)) return;
+
+    try {
+      const { error } = await supabase.from('tickets').delete().eq('id', ticket.id);
+      if (error) throw error;
+
+      setTickets(prev => prev.filter(t => t.id !== ticket.id));
+    } catch (err) {
+      alert('Failed to delete ticket: ' + err.message);
     }
   };
 
@@ -641,24 +662,36 @@ export default function AdminCommandConsole({ onNavigate }) {
     });
   }, [profiles, searchTerm, staffRoleFilter, staffRoleNames]);
 
+  const profileMap = useMemo(() => {
+    return new Map(profiles.map(p => [p.id, p]));
+  }, [profiles]);
+
   const filteredTickets = useMemo(() => {
     return tickets.filter(t => {
       const queryStr = searchTerm.toLowerCase();
       const code = (t.ticket_code || t.ticketCode || '').toLowerCase();
-      const matchesSearch = !searchTerm || code.includes(queryStr);
+      const owner = profileMap.get(t.owner_id);
+      const ownerName = (owner?.full_name || t.fullName || '').toLowerCase();
+      const ownerEmail = (owner?.email || t.email || '').toLowerCase();
+
+      const matchesSearch = !searchTerm ||
+        code.includes(queryStr) ||
+        ownerName.includes(queryStr) ||
+        ownerEmail.includes(queryStr);
 
       if (!matchesSearch) return false;
 
       if (activeFilter === 'CHECKED_IN' && t.status !== 'used' && t.status !== 'CHECKED_IN') return false;
       if (activeFilter === 'PENDING' && t.status !== 'valid' && t.status !== 'REGISTERED') return false;
       if (activeFilter === 'REVOKED' && t.status !== 'revoked') return false;
+      if (activeFilter === 'MANUAL' && !t.is_manual) return false;
       if (tierFilter !== 'ALL' && t.tier !== tierFilter) return false;
 
       if (!isInTimeScope(t.created_at || t.createdAt, regTimeScope)) return false;
 
       return true;
     });
-  }, [tickets, searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate]);
+  }, [tickets, profileMap, searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate]);
 
   // Reset pagination when filter criteria change
   useEffect(() => {
@@ -998,27 +1031,54 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards (Click to Filter Tickets) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="premium-card p-6 flex flex-col justify-between h-32">
+        <div
+          onClick={() => { setActiveTab('tickets'); setActiveFilter('ALL'); }}
+          className={`premium-card p-6 flex flex-col justify-between h-32 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
+            activeTab === 'tickets' && activeFilter === 'ALL' ? 'ring-2 ring-slate-900 shadow-md' : ''
+          }`}
+          title="Click to view all tickets"
+        >
           <span className="text-[10px] font-black uppercase text-slate-400">Total Issued Tickets</span>
           <p className="text-3xl font-black text-slate-900">{stats.total}</p>
-          <span className="text-[10px] font-bold text-slate-400">Global Database Baseline</span>
+          <span className="text-[10px] font-bold text-slate-400">Global Database Baseline (Click to Filter)</span>
         </div>
-        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-emerald-50 border-emerald-200">
+
+        <div
+          onClick={() => { setActiveTab('tickets'); setActiveFilter('CHECKED_IN'); }}
+          className={`premium-card p-6 flex flex-col justify-between h-32 bg-emerald-50 border-emerald-200 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
+            activeTab === 'tickets' && activeFilter === 'CHECKED_IN' ? 'ring-2 ring-emerald-600 shadow-md' : ''
+          }`}
+          title="Click to view Checked In passes"
+        >
           <span className="text-[10px] font-black uppercase text-emerald-700">Checked In (Used)</span>
           <p className="text-3xl font-black text-emerald-950">{stats.checkedIn}</p>
-          <span className="text-[10px] font-bold text-emerald-700">Present At Venue</span>
+          <span className="text-[10px] font-bold text-emerald-700">Present At Venue (Click to Filter)</span>
         </div>
-        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-amber-50 border-amber-200">
+
+        <div
+          onClick={() => { setActiveTab('tickets'); setActiveFilter('PENDING'); }}
+          className={`premium-card p-6 flex flex-col justify-between h-32 bg-amber-50 border-amber-200 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
+            activeTab === 'tickets' && activeFilter === 'PENDING' ? 'ring-2 ring-amber-500 shadow-md' : ''
+          }`}
+          title="Click to view Pending Valid passes"
+        >
           <span className="text-[10px] font-black uppercase text-amber-700">Pending Valid Passes</span>
           <p className="text-3xl font-black text-amber-950">{stats.pending}</p>
-          <span className="text-[10px] font-bold text-amber-700">Unscanned Passes</span>
+          <span className="text-[10px] font-bold text-amber-700">Unscanned Passes (Click to Filter)</span>
         </div>
-        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-slate-900 text-white">
+
+        <div
+          onClick={() => { setActiveTab('tickets'); setActiveFilter('MANUAL'); }}
+          className={`premium-card p-6 flex flex-col justify-between h-32 bg-slate-900 text-white cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${
+            activeTab === 'tickets' && activeFilter === 'MANUAL' ? 'ring-2 ring-amber-400 shadow-md' : ''
+          }`}
+          title="Click to view Box-Office Manual tickets"
+        >
           <span className="text-[10px] font-black uppercase text-slate-400">Box-Office Manual Tickets</span>
           <p className="text-3xl font-black text-amber-400">{stats.manualCount}</p>
-          <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers</span>
+          <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers (Click to Filter)</span>
         </div>
       </div>
 
@@ -1029,17 +1089,17 @@ export default function AdminCommandConsole({ onNavigate }) {
             <div className="relative flex-1 w-full">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
-                type="text" placeholder="Search ticket code..."
+                type="text" placeholder="Search attendee name, email, or ticket code..."
                 className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
                 value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
               />
             </div>
             <div className="flex items-center gap-2">
-              {['ALL', 'PENDING', 'CHECKED_IN', 'REVOKED'].map(f => (
+              {['ALL', 'PENDING', 'CHECKED_IN', 'REVOKED', 'MANUAL'].map(f => (
                 <button
                   key={f}
                   onClick={() => setActiveFilter(f)}
-                  className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase ${activeFilter === f ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500'}`}
+                  className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activeFilter === f ? 'bg-slate-900 text-white shadow-sm' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
                 >
                   {f}
                 </button>
@@ -1051,9 +1111,10 @@ export default function AdminCommandConsole({ onNavigate }) {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
-                  <th className="p-4">Ticket Code</th>
+                  <th className="p-4">Attendee & Ticket Code</th>
                   <th className="p-4">Tier</th>
                   <th className="p-4">Type</th>
+                  <th className="p-4">3-Day Attendance</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Scanned At</th>
                   <th className="p-4 text-right">Actions</th>
@@ -1061,33 +1122,99 @@ export default function AdminCommandConsole({ onNavigate }) {
               </thead>
               <tbody className="divide-y text-xs">
                 {filteredTickets.length === 0 ? (
-                  <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No tickets found in database.</td></tr>
+                  <tr><td colSpan="7" className="p-8 text-center text-slate-400 italic">No tickets found in database matching criteria.</td></tr>
                 ) : (
-                  paginatedTickets.map(t => (
-                    <tr key={t.id} className="hover:bg-slate-50">
-                      <td className="p-4 font-mono font-bold text-slate-900">{t.ticket_code || t.ticketCode}</td>
-                      <td className="p-4 uppercase font-black">{t.tier}</td>
-                      <td className="p-4">
-                        {t.is_manual ? <Badge variant="gold">MANUAL</Badge> : <Badge variant="pending">DIGITAL</Badge>}
-                      </td>
-                      <td className="p-4">
-                        <Badge variant={t.status === 'used' || t.status === 'CHECKED_IN' ? 'success' : t.status === 'valid' || t.status === 'REGISTERED' ? 'pending' : 'error'}>
-                          {t.status?.toUpperCase()}
-                        </Badge>
-                      </td>
-                      <td className="p-4 text-slate-500">
-                        {t.scanned_at ? new Date(t.scanned_at).toLocaleTimeString() : 'Unscanned'}
-                      </td>
-                      <td className="p-4 text-right">
-                        <button
-                          onClick={() => handleToggleRevocation(t)}
-                          className={`p-2 rounded-xl text-xs font-bold ${t.status === 'revoked' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}
-                        >
-                          {t.status === 'revoked' ? 'Restore' : 'Revoke'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  paginatedTickets.map(t => {
+                    const owner = profileMap.get(t.owner_id);
+                    const displayName = owner?.full_name || t.fullName || 'Attendee';
+                    const displayEmail = owner?.email || t.email || '';
+
+                    // 3-Day Attendance Telemetry
+                    const days = t.days_attended || t.daysAttended || {};
+                    let d1 = Boolean(days.day1);
+                    let d2 = Boolean(days.day2);
+                    let d3 = Boolean(days.day3);
+
+                    if (t.scanned_at) {
+                      const dateStr = new Date(t.scanned_at).toISOString().split('T')[0];
+                      if (dateStr === '2026-11-21') d1 = true;
+                      else if (dateStr === '2026-11-22') d2 = true;
+                      else if (dateStr === '2026-11-23') d3 = true;
+                      else if (t.status === 'used' || t.status === 'CHECKED_IN') d1 = true;
+                    } else if (t.status === 'used' || t.status === 'CHECKED_IN') {
+                      d1 = true;
+                    }
+
+                    const attendedCount = (d1 ? 1 : 0) + (d2 ? 1 : 0) + (d3 ? 1 : 0);
+
+                    return (
+                      <tr key={t.id} className="hover:bg-slate-50">
+                        <td className="p-4">
+                          <div className="font-extrabold text-slate-900 text-sm">{displayName}</div>
+                          <div className="text-[10px] font-mono font-bold text-slate-500 flex items-center gap-1.5 mt-0.5">
+                            <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{t.ticket_code || t.ticketCode}</span>
+                            {displayEmail && <span className="text-slate-400 font-sans font-medium">({displayEmail})</span>}
+                          </div>
+                        </td>
+                        <td className="p-4 uppercase font-black">{t.tier}</td>
+                        <td className="p-4">
+                          {t.is_manual ? <Badge variant="gold">MANUAL</Badge> : <Badge variant="pending">DIGITAL</Badge>}
+                        </td>
+
+                        {/* 3-Line Dash Attendance Telemetry */}
+                        <td className="p-4">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <div
+                                className={`h-1.5 w-5 rounded-full transition-all ${d1 ? 'bg-emerald-500 shadow-xs' : 'bg-slate-200'}`}
+                                title={`Day 1 (21 Nov): ${d1 ? 'Present' : 'Absent'}`}
+                              />
+                              <div
+                                className={`h-1.5 w-5 rounded-full transition-all ${d2 ? 'bg-emerald-500 shadow-xs' : 'bg-slate-200'}`}
+                                title={`Day 2 (22 Nov): ${d2 ? 'Present' : 'Absent'}`}
+                              />
+                              <div
+                                className={`h-1.5 w-5 rounded-full transition-all ${d3 ? 'bg-emerald-500 shadow-xs' : 'bg-slate-200'}`}
+                                title={`Day 3 (23 Nov): ${d3 ? 'Present' : 'Absent'}`}
+                              />
+                            </div>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
+                              {attendedCount} / 3 Days
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="p-4">
+                          <Badge variant={t.status === 'used' || t.status === 'CHECKED_IN' ? 'success' : t.status === 'valid' || t.status === 'REGISTERED' ? 'pending' : 'error'}>
+                            {t.status?.toUpperCase()}
+                          </Badge>
+                        </td>
+                        <td className="p-4 text-slate-500 font-mono text-[11px]">
+                          {t.scanned_at ? new Date(t.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Unscanned'}
+                        </td>
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleToggleRevocation(t)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                t.status === 'revoked' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                              }`}
+                            >
+                              {t.status === 'revoked' ? 'Restore' : 'Revoke'}
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteTicket(t)}
+                              className="p-1.5 rounded-xl bg-slate-100 text-rose-600 hover:bg-rose-100 transition-all"
+                              title="Delete Ticket from Database"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
