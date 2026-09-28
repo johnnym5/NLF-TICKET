@@ -26,7 +26,9 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
       try {
         user = await loginWithEmail(cleanEmail, password);
       } catch (loginErr) {
-        // 2. Auto-provision staff account on first login attempt if credentials match staff patterns
+        const errMsg = (loginErr.message || '').toLowerCase();
+
+        // 2. If user is not found or invalid credentials on admin/staff emails, attempt initial account provisioning
         const isAllowedStaffEmail = allowedEmails.some(pattern => {
           if (pattern.includes('*')) {
             const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
@@ -35,8 +37,9 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
           return cleanEmail === pattern;
         }) || cleanEmail === 'admin@gcc.com' || cleanEmail === 'admin@livestockcarnival.ng';
 
-        if (isAllowedStaffEmail) {
+        if (isAllowedStaffEmail && (errMsg.includes('invalid') || errMsg.includes('credentials') || errMsg.includes('not found'))) {
           const derivedRole = (cleanEmail === 'admin@gcc.com' || cleanEmail === 'admin@livestockcarnival.ng') ? 'admin' : 'gatekeeper';
+
           const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
             email: cleanEmail,
             password,
@@ -47,10 +50,15 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
             }
           });
 
-          if (signUpErr) throw signUpErr;
+          if (signUpErr) {
+            if (signUpErr.message?.includes('seconds')) {
+              throw new Error('Please wait ' + (signUpErr.message.match(/\d+/) || ['30'])[0] + ' seconds before retrying.');
+            }
+            throw new Error('Invalid credentials or account unconfirmed. Please check your password.');
+          }
+
           user = signUpData.user;
 
-          // Ensure profile is created with correct role
           if (user) {
             await supabase.from('profiles').upsert({
               id: user.id,
@@ -59,8 +67,10 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
               role: derivedRole
             });
           }
+        } else if (errMsg.includes('seconds')) {
+          throw new Error('Security rate limit active. Please wait a few seconds before trying again.');
         } else {
-          throw loginErr;
+          throw new Error('Invalid staff credentials or password. Please try again.');
         }
       }
 
