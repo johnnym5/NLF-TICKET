@@ -45,7 +45,8 @@ import {
   FolderPlus,
   Tag,
   UserPlus2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Eraser
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -101,7 +102,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState('tickets'); // 'tickets', 'gates', 'staff', 'audit'
+  const [activeTab, setActiveTab] = useState('tickets');
 
   // Live Data
   const [tickets, setTickets] = useState([]);
@@ -116,7 +117,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
-  // Pagination States (max 100, switchable between 10, 25, 50, 100)
+  // Pagination States
   const [ticketPageSize, setTicketPageSize] = useState(100);
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
   const [profilePageSize, setProfilePageSize] = useState(100);
@@ -136,9 +137,9 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   // Unified ADD USER Modal State
   const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [addUserModalTab, setAddUserModalTab] = useState('DETAILS'); // 'DETAILS' (manual entry) or 'TYPE' (new role/group)
+  const [addUserModalTab, setAddUserModalTab] = useState('DETAILS');
 
-  // Manual User Entry Form State (Email optional)
+  // Manual User Entry Form State
   const [manualUserFullName, setManualUserFullName] = useState('');
   const [manualUserEmail, setManualUserEmail] = useState('');
   const [manualUserRole, setManualUserRole] = useState('attendee');
@@ -146,7 +147,7 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   // Custom Group/Role Form State
   const [newRoleName, setNewRoleName] = useState('');
-  const [newRoleCategory, setNewRoleCategory] = useState('staff'); // 'staff' or 'attendee'
+  const [newRoleCategory, setNewRoleCategory] = useState('staff');
   const [newRoleColorName, setNewRoleColorName] = useState('Cobalt Blue');
   const [newRoleColorHex, setNewRoleColorHex] = useState('#2563EB');
 
@@ -191,7 +192,6 @@ export default function AdminCommandConsole({ onNavigate }) {
         if (rolesRes.data && rolesRes.data.length > 0) {
           setCustomRoles(rolesRes.data);
         } else {
-          // Fallback defaults
           setCustomRoles([
             { id: '1', name: 'Admin', category: 'staff', wristband_color: 'Obsidian Platinum', wristband_hex: '#0F172A' },
             { id: '2', name: 'Director', category: 'staff', wristband_color: 'Champagne Gold', wristband_hex: '#D97706' },
@@ -292,7 +292,6 @@ export default function AdminCommandConsole({ onNavigate }) {
         setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, role, assigned_gate_id: manualUserGate || null } : p));
       }
 
-      // Auto-issue ticket if role belongs to attendee category
       const roleObj = customRoles.find(r => r.name.toLowerCase() === role.toLowerCase());
       if (roleObj?.category === 'attendee' || role === 'attendee' || role === 'vendors' || role === 'exhibitors') {
         const ticketCode = generateTicketCode('general');
@@ -383,6 +382,26 @@ export default function AdminCommandConsole({ onNavigate }) {
       setTickets(prev => prev.filter(t => t.id !== ticket.id));
     } catch (err) {
       alert('Failed to delete ticket: ' + err.message);
+    }
+  };
+
+  const handlePurgeAdminTickets = async () => {
+    if (!window.confirm('Purge all duplicate admin ticket records from database?')) return;
+    try {
+      const adminProfiles = profiles.filter(p => ['admin', 'executive_admin'].includes((p.role || '').toLowerCase()) || p.email === 'admin@livestockcarnival.ng' || p.email === 'admin@gcc.com');
+      const adminIds = adminProfiles.map(p => p.id);
+
+      if (adminIds.length > 0) {
+        const { error } = await supabase.from('tickets').delete().in('owner_id', adminIds);
+        if (error) throw error;
+
+        setTickets(prev => prev.filter(t => !adminIds.includes(t.owner_id)));
+        alert('All duplicate admin ticket records purged successfully!');
+      } else {
+        alert('No admin user profiles found to purge.');
+      }
+    } catch (err) {
+      alert('Purge failed: ' + err.message);
     }
   };
 
@@ -585,21 +604,24 @@ export default function AdminCommandConsole({ onNavigate }) {
     return true;
   };
 
+  // Primary Tickets Stats (Filters parent/primary user passes to avoid double counting child guest passes)
   const stats = useMemo(() => {
     const now = new Date();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0,0,0,0);
 
-    const total = tickets.length;
-    const ticketsToday = tickets.filter(t => new Date(t.created_at || t.createdAt).toDateString() === now.toDateString()).length;
-    const ticketsThisWeek = tickets.filter(t => new Date(t.created_at || t.createdAt) >= startOfWeek).length;
-    const ticketsThisMonth = tickets.filter(t => new Date(t.created_at || t.createdAt).getMonth() === now.getMonth()).length;
+    const primaryTickets = tickets.filter(t => !t.parent_ticket_id);
 
-    const checkedIn = tickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
-    const pending = tickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
-    const revoked = tickets.filter(t => t.status === 'revoked').length;
-    const manualCount = tickets.filter(t => t.is_manual).length;
+    const total = primaryTickets.length;
+    const ticketsToday = primaryTickets.filter(t => new Date(t.created_at || t.createdAt).toDateString() === now.toDateString()).length;
+    const ticketsThisWeek = primaryTickets.filter(t => new Date(t.created_at || t.createdAt) >= startOfWeek).length;
+    const ticketsThisMonth = primaryTickets.filter(t => new Date(t.created_at || t.createdAt).getMonth() === now.getMonth()).length;
+
+    const checkedIn = primaryTickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
+    const pending = primaryTickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
+    const revoked = primaryTickets.filter(t => t.status === 'revoked').length;
+    const manualCount = primaryTickets.filter(t => t.is_manual).length;
 
     const turnoutRate = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
 
@@ -717,7 +739,7 @@ export default function AdminCommandConsole({ onNavigate }) {
     return filteredProfiles.slice(profileStartIndex, profileEndIndex);
   }, [filteredProfiles, profileStartIndex, profileEndIndex]);
 
-  if (!isAuthenticated) return <StaffLogin title="Executive Command Console" subtitle="Admin Verification Required" allowedEmails={['admin@gcc.com', 'admin@livestockcarnival.ng']} onSuccess={() => setIsAuthenticated(true)} />;
+  if (!isAuthenticated) return <StaffLogin title="Admin Dashboard Console" subtitle="Admin Verification Required" allowedEmails={['admin@gcc.com', 'admin@livestockcarnival.ng']} onSuccess={() => setIsAuthenticated(true)} />;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -1061,7 +1083,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         >
           <span className="text-[10px] font-black uppercase text-slate-400">Total Issued Tickets</span>
           <p className="text-3xl font-black text-slate-900">{stats.total}</p>
-          <span className="text-[10px] font-bold text-slate-400">Global Database Baseline (Click to Filter)</span>
+          <span className="text-[10px] font-bold text-slate-400">Global Database Baseline</span>
         </div>
 
         <div
@@ -1080,7 +1102,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         >
           <span className="text-[10px] font-black uppercase text-emerald-700">Checked In (Used)</span>
           <p className="text-3xl font-black text-emerald-950">{stats.checkedIn}</p>
-          <span className="text-[10px] font-bold text-emerald-700">Present At Venue (Click to Filter)</span>
+          <span className="text-[10px] font-bold text-emerald-700">Present At Venue</span>
         </div>
 
         <div
@@ -1099,7 +1121,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         >
           <span className="text-[10px] font-black uppercase text-amber-700">Pending Valid Passes</span>
           <p className="text-3xl font-black text-amber-950">{stats.pending}</p>
-          <span className="text-[10px] font-bold text-amber-700">Unscanned Passes (Click to Filter)</span>
+          <span className="text-[10px] font-bold text-amber-700">Unscanned Passes</span>
         </div>
 
         <div
@@ -1118,7 +1140,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         >
           <span className="text-[10px] font-black uppercase text-slate-400">Manual Gate Tickets</span>
           <p className="text-3xl font-black text-amber-400">{stats.manualCount}</p>
-          <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers (Click to Filter)</span>
+          <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers</span>
         </div>
       </div>
 
@@ -1126,14 +1148,26 @@ export default function AdminCommandConsole({ onNavigate }) {
       {activeTab === 'tickets' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text" placeholder="Search attendee name, email, or ticket code..."
-                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
-                value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-              />
+            <div className="relative flex-1 w-full flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text" placeholder="Search attendee name, email, or ticket code..."
+                  className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
+                  value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
+
+              <button
+                onClick={handlePurgeAdminTickets}
+                className="px-3 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition-colors"
+                title="Purge all duplicate admin pass records"
+              >
+                <Eraser className="w-3.5 h-3.5" />
+                Purge Admin Passes
+              </button>
             </div>
+
             <div className="flex items-center gap-2">
               {['ALL', 'PENDING', 'CHECKED_IN', 'REVOKED', 'MANUAL'].map(f => (
                 <button
@@ -1245,7 +1279,7 @@ export default function AdminCommandConsole({ onNavigate }) {
 
                             <button
                               onClick={() => handleDeleteTicket(t)}
-                              className="p-1.5 rounded-xl bg-slate-100 text-rose-600 hover:bg-rose-100 transition-all"
+                              className="p-1.5 rounded-xl bg-slate-100 text-rose-600 hover:bg-rose-100 transition-all cursor-pointer"
                               title="Delete Ticket from Database"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1387,6 +1421,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               ) : (
                 paginatedProfiles.map(p => {
                   const online = isUserOnline(p.last_seen_at);
+                  const isGatekeeper = (p.role || '').toLowerCase() === 'gatekeeper';
                   const isStaff = isStaffRole(p.role);
                   const wristband = getRoleWristbandObj(p.role);
                   const isManualUser = p.email && p.email.startsWith('manual-');
@@ -1436,7 +1471,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                         </select>
                       </td>
                       <td className="p-4">
-                        {isStaff ? (
+                        {isGatekeeper ? (
                           <select
                             value={p.assigned_gate_id || ''}
                             onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
@@ -1445,19 +1480,19 @@ export default function AdminCommandConsole({ onNavigate }) {
                             <option value="">Unassigned Gate</option>
                             {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                           </select>
-                        ) : (
+                        ) : !isStaff ? (
                           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl w-fit">
                             <span className="w-2.5 h-2.5 rounded-full border border-slate-300" style={{ backgroundColor: wristband.hex }} />
                             <span className="font-extrabold uppercase text-slate-700 text-[10px]">
                               {wristband.name}
                             </span>
                           </div>
-                        )}
+                        ) : null}
                       </td>
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleDeleteProfile(p.id)}
-                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                           title="Delete User Profile"
                         >
                           <Trash2 className="w-4 h-4" />
