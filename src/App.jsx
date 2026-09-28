@@ -71,9 +71,6 @@ function AppContent() {
     }
   };
 
-  const isAdmin = userRole === 'executive_admin';
-  const isGatekeeper = userRole === 'gatekeeper' || userRole === 'gate_supervisor' || isAdmin;
-
   return (
     <div className="min-h-screen flex flex-col bg-[#FBFBFA] relative overflow-hidden">
       {/* High-Fidelity Atmospheric Background Layer */}
@@ -82,7 +79,6 @@ function AppContent() {
           className="absolute -inset-[20%] w-[140%] h-[140%] bg-cover bg-center animate-pan-zoom-blur opacity-30 grayscale-[20%] blur-[80px]"
           style={{ backgroundImage: `url('/festival-bg.jpg')` }}
         />
-        {/* Subtle color wash to maintain legibility */}
         <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-transparent to-slate-50/40" />
       </div>
 
@@ -181,14 +177,12 @@ function AppContent() {
         vipTier={vipTierHint}
         invitationId={invitationId}
         onSuccess={(user) => {
-          // The user object is passed back from AuthModal after successful login/signup
           const email = user?.email || '';
-          if (email === 'admin@livestockcarnival.ng' || email === 'admin@gcc.com') {
+          if (userRole === 'admin' || userRole === 'executive_admin' || email === 'admin@livestockcarnival.ng' || email === 'admin@gcc.com') {
             navigateTo('admin');
-          } else if (email.startsWith('qrscanner')) {
+          } else if (userRole === 'gatekeeper' || email.startsWith('qrscanner')) {
             navigateTo('gatekeeper');
           } else {
-            // Regular users go to their pass
             navigateTo('pass');
           }
           setAuthModalOpen(false);

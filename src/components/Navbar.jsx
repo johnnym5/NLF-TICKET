@@ -8,8 +8,8 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
   const { currentUser, userRole, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
-  const isAdmin = userRole === 'executive_admin';
-  const isGatekeeper = userRole === 'gatekeeper' || userRole === 'gate_supervisor' || isAdmin;
+  const isAdmin = userRole === 'admin' || userRole === 'executive_admin' || currentUser?.email === 'admin@livestockcarnival.ng' || currentUser?.email === 'admin@gcc.com';
+  const isGatekeeper = userRole === 'gatekeeper' || userRole === 'security' || isAdmin;
 
   const navItems = [
     { id: 'landing', label: 'Festival Info', icon: Info, public: true },
@@ -22,7 +22,6 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
     if (item.public) return true;
     if (item.auth && currentUser) return true;
     if (item.role) return true;
-    // Always show if it's the current route (helps with landing on restricted pages)
     if (currentRoute === item.id) return true;
     return false;
   });
@@ -76,9 +75,9 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
                   className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
                 >
                    <div className="w-5 h-5 rounded-full bg-sage-deep text-white flex items-center justify-center text-[10px] font-bold">
-                      {currentUser.displayName?.charAt(0) || 'U'}
+                      {currentUser.displayName?.charAt(0) || currentUser.email?.charAt(0)?.toUpperCase() || 'U'}
                    </div>
-                   <span className="text-[11px] font-black text-slate-700 uppercase tracking-wider">{currentUser.displayName?.split(' ')[0] || 'User'}</span>
+                   <span className="text-[11px] font-black text-slate-700 uppercase tracking-wider">{userRole.toUpperCase()}</span>
                 </div>
                 <Button variant="ghost" size="sm" icon={LogOut} onClick={logout} />
               </div>
