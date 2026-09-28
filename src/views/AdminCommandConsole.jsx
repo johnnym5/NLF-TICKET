@@ -5,6 +5,7 @@ import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import Input from '../components/ui/Input';
 import {
   Users,
   UserCheck,
@@ -30,7 +31,12 @@ import {
   Crown,
   Link2,
   Copy,
-  Check
+  Check,
+  MapPin,
+  Shield,
+  Plus,
+  Trash2,
+  ClipboardList
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -40,45 +46,110 @@ const FESTIVAL_DAYS = [
 ];
 
 export const ACCOUNT_TYPES = {
+  general: { label: 'General Admission', badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
+  vip_1: { label: 'VIP Tier 1 (+10)', badgeBg: 'bg-slate-100 text-slate-700 border-slate-300' },
+  vip_2: { label: 'VIP Tier 2 (+15)', badgeBg: 'bg-amber-100 text-amber-900 border-amber-300' },
+  vip_3: { label: 'VIP Tier 3 (+20)', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700' },
   REGULAR: { label: 'General Admission', badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
   VIP_SILVER: { label: 'VIP Silver Hospitality', badgeBg: 'bg-slate-100 text-slate-700 border-slate-300' },
   VIP_GOLD: { label: 'VIP Gold Delegate', badgeBg: 'bg-amber-100 text-amber-900 border-amber-300' },
-  VIP_PLATINUM: { label: 'Platinum Protocol', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700' },
-  TEAM_MEMBER: { label: 'Official Team Member', badgeBg: 'bg-blue-100 text-blue-900 border-blue-300' },
-  VENDOR: { label: 'Certified Vendor', badgeBg: 'bg-orange-100 text-orange-900 border-orange-300' },
-  ASSOCIATE: { label: 'Partner Associate', badgeBg: 'bg-purple-100 text-purple-900 border-purple-300' }
+  VIP_PLATINUM: { label: 'Platinum Protocol', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700' }
 };
 
 export default function AdminCommandConsole({ onNavigate }) {
   const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Live attendees list from Supabase
-  const [attendees, setAttendees] = useState([]);
+  // Active Tab
+  const [activeTab, setActiveTab] = useState('tickets'); // 'tickets', 'gates', 'staff', 'audit'
+
+  // Live Data
+  const [tickets, setTickets] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [gates, setGates] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Filter States
   const [showExecutiveDashboard, setShowExecutiveDashboard] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL'); // ALL, CHECKED_IN, PENDING, REVOKED
-  const [tierFilter, setTierFilter] = useState('ALL'); // ALL, VIP, NORMAL
-  const [specificTierFilter, setSpecificTierFilter] = useState('ALL');
-  const [dayFilter, setDayFilter] = useState('ALL');
+  const [tierFilter, setTierFilter] = useState('ALL');
 
-  // Advanced Registration Time Filtering
-  const [regTimeScope, setRegTimeScope] = useState('ALL'); // ALL, TODAY, THIS_WEEK, THIS_MONTH
-  const [selectedCustomDate, setSelectedCustomDate] = useState('');
+  // Gate Form State
+  const [showGateModal, setShowGateModal] = useState(false);
+  const [newGateName, setNewGateName] = useState('');
+  const [newGateDesc, setNewGateDesc] = useState('');
 
   // VIP Invitation Generator State
-  const [selectedVipTier, setSelectedVipTier] = useState('VIP_GOLD');
+  const [selectedVipTier, setSelectedVipTier] = useState('vip_2');
   const [generatedVipUrl, setGeneratedVipUrl] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  useEffect(() => {
+    setIsAuthenticated(
+      userRole === 'admin' ||
+      userRole === 'executive_admin' ||
+      currentUser?.email === 'admin@livestockcarnival.ng' ||
+      currentUser?.email === 'admin@gcc.com'
+    );
+  }, [userRole, currentUser]);
+
+  // Real-time synchronization via Supabase
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    setLoading(true);
+
+    const fetchData = async () => {
+      try {
+        const [ticketsRes, profilesRes, gatesRes] = await Promise.all([
+          supabase.from('tickets').select('*').order('created_at', { ascending: false }),
+          supabase.from('profiles').select('*, gates(*)').order('created_at', { ascending: false }),
+          supabase.from('gates').select('*').order('name', { ascending: true })
+        ]);
+
+        if (ticketsRes.data) setTickets(ticketsRes.data);
+        if (profilesRes.data) setProfiles(profilesRes.data);
+        if (gatesRes.data) setGates(gatesRes.data);
+      } catch (err) {
+        console.error('Error fetching admin telemetry:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+
+    const ticketsChannel = supabase
+      .channel('admin_tickets_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setTickets(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setTickets(prev => prev.map(a => a.id === payload.new.id ? payload.new : a));
+        } else if (payload.eventType === 'DELETE') {
+          setTickets(prev => prev.filter(a => a.id === payload.old.id));
+        }
+      })
+      .subscribe();
+
+    const profilesChannel = supabase
+      .channel('admin_profiles_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ticketsChannel);
+      supabase.removeChannel(profilesChannel);
+    };
+  }, [isAuthenticated]);
+
   const handleGenerateVipLink = async () => {
     setIsGenerating(true);
     const inviteId = Math.random().toString(36).substring(2, 15);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins from now
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     try {
       const { error } = await supabase.from('vip_invitations').insert({
@@ -121,609 +192,403 @@ export default function AdminCommandConsole({ onNavigate }) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
     } catch (e) {
-      console.warn('Clipboard failed:', e);
       alert('Manual Copy Required: ' + generatedVipUrl);
     }
   };
 
-  const handleAdjustDate = (offset) => {
-    let baseDate = selectedCustomDate ? new Date(selectedCustomDate) : new Date();
-    if (isNaN(baseDate.getTime())) baseDate = new Date();
+  const handleCreateGate = async (e) => {
+    e.preventDefault();
+    if (!newGateName.trim()) return;
 
-    baseDate.setDate(baseDate.getDate() + offset);
-    const newDateStr = baseDate.toISOString().split('T')[0];
-    setSelectedCustomDate(newDateStr);
-    setRegTimeScope('CUSTOM');
-  };
-
-  useEffect(() => {
-    setIsAuthenticated(
-      userRole === 'admin' ||
-      userRole === 'executive_admin' ||
-      currentUser?.email === 'admin@livestockcarnival.ng' ||
-      currentUser?.email === 'admin@gcc.com'
-    );
-  }, [userRole, currentUser]);
-
-  // Real-time synchronization via Supabase Postgres Changes
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    setLoading(true);
-
-    const fetchAttendees = async () => {
+    try {
       const { data, error } = await supabase
-        .from('tickets')
+        .from('gates')
+        .insert({
+          name: newGateName.trim(),
+          description: newGateDesc.trim()
+        })
         .select('*')
-        .order('createdAt', { ascending: false });
+        .single();
 
-      if (!error && data) {
-        setAttendees(data);
-      }
-      setLoading(false);
-    };
+      if (error) throw error;
 
-    fetchAttendees();
-
-    const channel = supabase
-      .channel('admin_tickets_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setAttendees(prev => [payload.new, ...prev]);
-        } else if (payload.eventType === 'UPDATE') {
-          setAttendees(prev => prev.map(a => a.id === payload.new.id ? payload.new : a));
-        } else if (payload.eventType === 'DELETE') {
-          setAttendees(prev => prev.filter(a => a.id === payload.old.id));
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isAuthenticated]);
-
-  // Helper: Date Logic for filtering
-  const isInTimeScope = (createdAt, scope) => {
-    if (!createdAt || scope === 'ALL') return true;
-
-    const date = new Date(createdAt);
-    const now = new Date();
-
-    if (scope === 'TODAY') {
-      return date.toDateString() === now.toDateString();
+      setGates(prev => [...prev, data]);
+      setNewGateName('');
+      setNewGateDesc('');
+      setShowGateModal(false);
+    } catch (err) {
+      alert('Failed to create gate: ' + err.message);
     }
-
-    if (scope === 'THIS_WEEK') {
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay());
-      startOfWeek.setHours(0,0,0,0);
-      return date >= startOfWeek;
-    }
-
-    if (scope === 'THIS_MONTH') {
-      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-    }
-
-    if (selectedCustomDate) {
-      return date.toISOString().split('T')[0] === selectedCustomDate;
-    }
-
-    return true;
   };
 
-  // Derive Statistics directly from the live attendees list
+  const handleDeleteGate = async (gateId) => {
+    if (!window.confirm('Delete this gate?')) return;
+    try {
+      await supabase.from('gates').delete().eq('id', gateId);
+      setGates(prev => prev.filter(g => g.id !== gateId));
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleAssignRoleAndGate = async (profileId, role, gateId) => {
+    try {
+      const updatePayload = { role };
+      if (gateId !== undefined) updatePayload.assigned_gate_id = gateId || null;
+
+      const { error } = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', profileId);
+
+      if (error) throw error;
+
+      setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, ...updatePayload } : p));
+    } catch (err) {
+      alert('Update failed: ' + err.message);
+    }
+  };
+
+  const handleToggleRevocation = async (ticket) => {
+    if (!window.confirm(`${ticket.status === 'revoked' ? 'Restore' : 'Revoke'} access for ticket ${ticket.ticket_code}?`)) return;
+    try {
+      const newStatus = ticket.status === 'revoked' ? 'valid' : 'revoked';
+      const { error } = await supabase.from('tickets').update({
+        status: newStatus
+      }).eq('id', ticket.id);
+      if (error) throw error;
+    } catch (err) { alert(err.message); }
+  };
+
   const stats = useMemo(() => {
-    const scopeAttendees = attendees.filter(a => isInTimeScope(a.createdAt, regTimeScope));
+    const total = tickets.length;
+    const checkedIn = tickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
+    const pending = tickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
+    const revoked = tickets.filter(t => t.status === 'revoked').length;
+    const manualCount = tickets.filter(t => t.is_manual).length;
 
-    const total = scopeAttendees.length;
-    const checkedIn = scopeAttendees.filter(a => a.status === 'CHECKED_IN').length;
-    const pending = scopeAttendees.filter(a => a.status === 'REGISTERED').length;
-    const revoked = scopeAttendees.filter(a => a.accessRevoked === true).length;
+    return { total, checkedIn, pending, revoked, manualCount };
+  }, [tickets]);
 
-    const dayDistribution = { day1: 0, day2: 0, day3: 0 };
-    scopeAttendees.forEach(a => {
-      if (a.daysAttended) {
-        if (a.daysAttended.day1) dayDistribution.day1++;
-        if (a.daysAttended.day2) dayDistribution.day2++;
-        if (a.daysAttended.day3) dayDistribution.day3++;
-      } else if (a.status === 'CHECKED_IN') {
-        dayDistribution.day1++;
-      }
+  const gatekeeperAudit = useMemo(() => {
+    const staffProfiles = profiles.filter(p => ['admin', 'gatekeeper', 'security'].includes(p.role));
+
+    return staffProfiles.map(staff => {
+      const scansCount = tickets.filter(t => t.scanned_by === staff.id).length;
+      const manualCount = tickets.filter(t => t.created_by === staff.id && t.is_manual).length;
+      return {
+        ...staff,
+        scansCount,
+        manualCount
+      };
     });
+  }, [profiles, tickets]);
 
-    const turnoutRate = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
-
-    return { total, checkedIn, pending, revoked, dayDistribution, turnoutRate };
-  }, [attendees, regTimeScope, selectedCustomDate]);
-
-  // Filtered list for display in the table
-  const filteredAttendees = useMemo(() => {
-    return attendees.filter(a => {
+  const filteredTickets = useMemo(() => {
+    return tickets.filter(t => {
       const queryStr = searchTerm.toLowerCase();
-      const matchesSearch =
-        !searchTerm ||
-        (a.fullName || '').toLowerCase().includes(queryStr) ||
-        (a.email || '').toLowerCase().includes(queryStr) ||
-        (a.ticketCode || '').toLowerCase().includes(queryStr);
+      const code = (t.ticket_code || t.ticketCode || '').toLowerCase();
+      const matchesSearch = !searchTerm || code.includes(queryStr);
 
       if (!matchesSearch) return false;
 
-      // Card-based status filtering
-      if (activeFilter === 'CHECKED_IN' && a.status !== 'CHECKED_IN') return false;
-      if (activeFilter === 'PENDING' && a.status !== 'REGISTERED') return false;
-      if (activeFilter === 'REVOKED' && !a.accessRevoked) return false;
-
-      // VIP vs Normal Logic
-      if (tierFilter === 'VIP' && !(a.tier || '').startsWith('VIP')) return false;
-      if (tierFilter === 'NORMAL' && (a.tier || '').startsWith('VIP')) return false;
-
-      // Specific Tier
-      if (specificTierFilter !== 'ALL' && a.tier !== specificTierFilter) return false;
-
-      // Distribution-based Day filtering
-      if (dayFilter !== 'ALL') {
-        const hasAttended = a.daysAttended?.[dayFilter] || (dayFilter === 'day1' && a.status === 'CHECKED_IN');
-        if (!hasAttended) return false;
-      }
-
-      // Registration Time Filter
-      if (!isInTimeScope(a.createdAt, regTimeScope)) return false;
+      if (activeFilter === 'CHECKED_IN' && t.status !== 'used' && t.status !== 'CHECKED_IN') return false;
+      if (activeFilter === 'PENDING' && t.status !== 'valid' && t.status !== 'REGISTERED') return false;
+      if (activeFilter === 'REVOKED' && t.status !== 'revoked') return false;
+      if (tierFilter !== 'ALL' && t.tier !== tierFilter) return false;
 
       return true;
     });
-  }, [attendees, searchTerm, activeFilter, tierFilter, specificTierFilter, dayFilter, regTimeScope, selectedCustomDate]);
-
-  const handleUpgradeAccount = async (attendee, newTier) => {
-    if (!window.confirm(`Upgrade ${attendee.fullName} to ${newTier}?`)) return;
-    try {
-      const { error } = await supabase.from('tickets').update({
-        tier: newTier,
-        wristbandColor: TIER_WRISTBANDS[newTier] || 'Emerald Green'
-      }).eq('id', attendee.id);
-      if (error) throw error;
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleUpdateRole = async (attendee, newRole) => {
-    if (!window.confirm(`Change ${attendee.fullName} role to ${newRole}?`)) return;
-    try {
-      const { error } = await supabase.from('tickets').update({
-        role: newRole
-      }).eq('id', attendee.id);
-      if (error) throw error;
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleToggleRevocation = async (attendee) => {
-    if (!window.confirm(`${attendee.accessRevoked ? 'Restore' : 'Revoke'} access for ${attendee.fullName}?`)) return;
-    try {
-      const isNowRevoked = !attendee.accessRevoked;
-      const { error } = await supabase.from('tickets').update({
-        accessRevoked: isNowRevoked,
-        status: isNowRevoked ? 'REVOKED' : (attendee.status === 'REVOKED' ? 'REGISTERED' : attendee.status)
-      }).eq('id', attendee.id);
-      if (error) throw error;
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleResetQR = async (attendee) => {
-    if (!window.confirm(`Regenerate QR code for ${attendee.fullName}?`)) return;
-    const entropy = Math.random().toString(36).substring(2, 8).toUpperCase();
-    try {
-      const { error } = await supabase.from('tickets').update({
-        ticketCode: `GCC-2026-${entropy}`,
-        status: 'REGISTERED',
-        daysAttended: { day1: false, day2: false, day3: false }
-      }).eq('id', attendee.id);
-      if (error) throw error;
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleManualCheckIn = async (attendee) => {
-    if (!window.confirm(`Manually check in ${attendee.fullName}?`)) return;
-    try {
-      const { error } = await supabase.from('tickets').update({
-        status: 'CHECKED_IN',
-        checkedInAt: new Date().toLocaleTimeString(),
-        checkedInFullDate: new Date().toISOString(),
-        checkedInBy: 'ADMIN_MANUAL',
-        daysAttended: { ...(attendee.daysAttended || {}), day1: true }
-      }).eq('id', attendee.id);
-      if (error) throw error;
-    } catch (err) { alert(err.message); }
-  };
+  }, [tickets, searchTerm, activeFilter, tierFilter]);
 
   const handleExportCsv = () => {
-    if (attendees.length === 0) return;
-    const headers = ['Full Name', 'Email', 'Ticket Code', 'Tier', 'Status', 'Revoked', 'Registration Date'];
-    const rows = attendees.map(a => {
-      const date = new Date(a.createdAt);
-      return [
-        `"${a.fullName}"`, `"${a.email}"`, `"${a.ticketCode}"`, `"${a.tier}"`, `"${a.status}"`, `"${a.accessRevoked}"`, `"${date.toLocaleDateString()}"`
-      ];
-    });
+    if (tickets.length === 0) return;
+    const headers = ['Ticket Code', 'Tier', 'Status', 'Manual', 'Scanned At', 'Created At'];
+    const rows = tickets.map(t => [
+      `"${t.ticket_code || t.ticketCode}"`, `"${t.tier}"`, `"${t.status}"`, `"${t.is_manual}"`, `"${t.scanned_at || ''}"`, `"${t.created_at || t.createdAt}"`
+    ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `GCC_Attendees_Master.csv`);
+    link.setAttribute("download", `NLF_Tickets_Master.csv`);
     link.click();
   };
 
-  if (!isAuthenticated) return <StaffLogin title="Executive Hub" subtitle="Authorized Access Only" allowedEmails={['admin@gcc.com']} onSuccess={() => setIsAuthenticated(true)} />;
+  if (!isAuthenticated) return <StaffLogin title="Executive Command Console" subtitle="Admin Verification Required" allowedEmails={['admin@gcc.com', 'admin@livestockcarnival.ng']} onSuccess={() => setIsAuthenticated(true)} />;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Controls Bar */}
+      {/* Header Bar */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4 cursor-pointer" onClick={() => setShowExecutiveDashboard(!showExecutiveDashboard)}>
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${showExecutiveDashboard ? 'bg-[#0F4A2F] text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-            <BarChart3 className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">Executive Command Hub</h1>
-              <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${showExecutiveDashboard ? 'rotate-180' : ''}`} />
-            </div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Real-time Venue Accreditation Telemetry</p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Enterprise Box-Office Console</h1>
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">Multi-Gate Telemetry & Staff Auditing</p>
         </div>
-        <div className="flex items-center gap-3">
-           <Button variant="secondary" size="sm" icon={Activity} onClick={() => onNavigate?.('diagnostics')}>Diagnostics</Button>
-           <Button size="sm" icon={Download} onClick={handleExportCsv}>Export Master Data</Button>
+
+        <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl">
+          {[
+            { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
+            { id: 'gates', label: 'Venue Gates', icon: MapPin },
+            { id: 'staff', label: 'Staff & Roles', icon: Shield },
+            { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
+          ].map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === tab.id ? 'bg-[#0F4A2F] text-white shadow-md' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Main Stats (Collapsible) */}
-      {showExecutiveDashboard && (
-        <div className="space-y-6 animate-fadeIn">
-          {/* VIP Invitation Link Generator */}
-          <div className="bg-white rounded-3xl border border-champagne-border p-6 shadow-sm bg-gradient-to-r from-white via-champagne-light/20 to-white">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Crown className="w-5 h-5 text-champagne-text" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">VIP Link Dispatcher</h3>
-                </div>
-                <p className="text-[10px] text-slate-500 font-medium">Generate a temporary (15 min) one-time invitation link for executive delegates and royalty.</p>
-              </div>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="premium-card p-6 flex flex-col justify-between h-32">
+          <span className="text-[10px] font-black uppercase text-slate-400">Total Issued Tickets</span>
+          <p className="text-3xl font-black text-slate-900">{stats.total}</p>
+          <span className="text-[10px] font-bold text-slate-400">Global Database Baseline</span>
+        </div>
+        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-emerald-50 border-emerald-200">
+          <span className="text-[10px] font-black uppercase text-emerald-700">Checked In (Used)</span>
+          <p className="text-3xl font-black text-emerald-950">{stats.checkedIn}</p>
+          <span className="text-[10px] font-bold text-emerald-700">Present At Venue</span>
+        </div>
+        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-amber-50 border-amber-200">
+          <span className="text-[10px] font-black uppercase text-amber-700">Pending Valid Passes</span>
+          <p className="text-3xl font-black text-amber-950">{stats.pending}</p>
+          <span className="text-[10px] font-bold text-amber-700">Unscanned Passes</span>
+        </div>
+        <div className="premium-card p-6 flex flex-col justify-between h-32 bg-slate-900 text-white">
+          <span className="text-[10px] font-black uppercase text-slate-400">Box-Office Manual Tickets</span>
+          <p className="text-3xl font-black text-amber-400">{stats.manualCount}</p>
+          <span className="text-[10px] font-bold text-slate-400">Issued by Gatekeepers</span>
+        </div>
+      </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
-                  {['VIP_SILVER', 'VIP_GOLD', 'VIP_PLATINUM'].map(tier => (
-                    <button
-                      key={tier}
-                      onClick={() => setSelectedVipTier(tier)}
-                      className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${selectedVipTier === tier ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                    >
-                      {tier.split('_')[1]}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  onClick={handleGenerateVipLink}
-                  disabled={isGenerating}
-                  className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isGenerating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
-                  Generate Link
-                </button>
-              </div>
+      {/* TAB 1: TICKETS REGISTRY */}
+      {activeTab === 'tickets' && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text" placeholder="Search ticket code..."
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
+                value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              />
             </div>
-
-            {generatedVipUrl && (
-              <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-2xl animate-fadeIn space-y-2">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 font-mono text-[10px] text-slate-500 truncate px-2">{generatedVipUrl}</div>
-                  <button
-                    onClick={handleCopyVipLink}
-                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
-                  >
-                    {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    {copiedLink ? 'Copied!' : 'Copy'}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 px-2 border-t border-slate-200/50 pt-2">
-                  <Clock className="w-3 h-3 text-rose-500" />
-                  <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">This link will self-destruct in 15 minutes. One use only.</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Advanced Registration Velocity Filter */}
-          <div className="flex flex-wrap items-center gap-3 p-4 bg-white rounded-2xl border border-slate-100 shadow-xs">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest mr-2 flex items-center gap-1.5">
-                <CalendarRange className="w-3.5 h-3.5" />
-                Reg Timeframe:
-            </span>
-            {[
-                { id: 'ALL', label: 'Lifetime', icon: Layers },
-                { id: 'TODAY', label: 'Today', icon: Clock },
-                { id: 'THIS_WEEK', label: 'Weekly', icon: CalendarDays },
-                { id: 'THIS_MONTH', label: 'Monthly', icon: Calendar }
-            ].map(btn => (
+            <div className="flex items-center gap-2">
+              {['ALL', 'PENDING', 'CHECKED_IN', 'REVOKED'].map(f => (
                 <button
-                    key={btn.id}
-                    onClick={() => { setRegTimeScope(btn.id); setSelectedCustomDate(''); }}
-                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border ${regTimeScope === btn.id ? 'bg-[#0F4A2F] text-white border-[#0F4A2F] shadow-sm' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'}`}
+                  key={f}
+                  onClick={() => setActiveFilter(f)}
+                  className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase ${activeFilter === f ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500'}`}
                 >
-                    {btn.label}
+                  {f}
                 </button>
-            ))}
-            <div className="h-6 w-[1px] bg-slate-200 mx-2 hidden sm:block" />
-
-            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-1">
-                <button
-                    onClick={() => handleAdjustDate(-1)}
-                    className="p-1.5 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                    title="Previous Day"
-                >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
-                <input
-                    type="date"
-                    value={selectedCustomDate}
-                    onChange={(e) => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); }}
-                    className="bg-transparent border-none py-1.5 text-[10px] font-bold text-slate-700 outline-none focus:ring-0 w-28"
-                />
-                <button
-                    onClick={() => handleAdjustDate(1)}
-                    className="p-1.5 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                    title="Next Day"
-                >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+              ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* All Registrations Card */}
-            <button
-              onClick={() => { setActiveFilter('ALL'); setDayFilter('ALL'); }}
-              className={`premium-card p-6 flex flex-col justify-between h-36 text-left transition-all ${activeFilter === 'ALL' && dayFilter === 'ALL' ? 'border-[#0F4A2F] ring-2 ring-[#0F4A2F]/10 bg-slate-50 shadow-lg' : 'hover:border-slate-300'}`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Registrations</span>
-                <Users className={`w-4 h-4 ${activeFilter === 'ALL' ? 'text-[#0F4A2F]' : 'text-slate-300'}`} />
-              </div>
-              <p className="text-4xl font-black text-slate-900 tracking-tighter">{stats.total}</p>
-              <p className="text-[10px] font-bold text-slate-400 italic">
-                  {regTimeScope === 'ALL' ? 'Global Database Baseline' : `Filtered Registration Intake`}
-              </p>
-            </button>
-
-            {/* Checked In Card */}
-            <button
-              onClick={() => { setActiveFilter('CHECKED_IN'); setDayFilter('ALL'); }}
-              className={`premium-card p-6 flex flex-col justify-between h-36 text-left transition-all ${activeFilter === 'CHECKED_IN' ? 'border-emerald-500 ring-2 ring-emerald-500/10 bg-emerald-50 shadow-lg' : 'hover:border-slate-300'}`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Present At Venue</span>
-                <UserCheck className={`w-4 h-4 ${activeFilter === 'CHECKED_IN' ? 'text-emerald-500' : 'text-slate-300'}`} />
-              </div>
-              <p className="text-4xl font-black text-slate-900 tracking-tighter">{stats.checkedIn}</p>
-              <p className="text-[10px] font-bold text-emerald-600/60 uppercase">Wristbands Distributed</p>
-            </button>
-
-            {/* Pending Card */}
-            <button
-              onClick={() => { setActiveFilter('PENDING'); setDayFilter('ALL'); }}
-              className={`premium-card p-6 flex flex-col justify-between h-36 text-left transition-all ${activeFilter === 'PENDING' ? 'border-amber-500 ring-2 ring-amber-500/10 bg-amber-50 shadow-lg' : 'hover:border-slate-300'}`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-widest text-amber-600">Pending Arrivals</span>
-                <Clock className={`w-4 h-4 ${activeFilter === 'PENDING' ? 'text-amber-500' : 'text-slate-300'}`} />
-              </div>
-              <p className="text-4xl font-black text-slate-900 tracking-tighter">{stats.pending}</p>
-              <p className="text-[10px] font-bold text-amber-600/60 uppercase">Registered but unscanned</p>
-            </button>
-
-            {/* Turnout Rate */}
-            <div className="premium-card p-6 flex flex-col justify-between h-36 bg-slate-900 text-white shadow-xl">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Turnout</span>
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
-              </div>
-              <p className="text-4xl font-black tracking-tighter">{stats.turnoutRate}%</p>
-              <div className="w-full bg-white/10 rounded-full h-1 overflow-hidden mt-1">
-                <div className="bg-emerald-400 h-full transition-all duration-1000" style={{ width: `${stats.turnoutRate}%` }} />
-              </div>
-            </div>
-          </div>
-
-          {/* 3-Day Distribution & Attendance Detail */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 premium-card p-8 border-slate-200 shadow-lg bg-white/80 backdrop-blur-md">
-              <div className="flex items-center gap-2 mb-8">
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">3-Day Attendance Distribution</h3>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                {FESTIVAL_DAYS.map((fest) => {
-                  const count = stats.dayDistribution[fest.id] || 0;
-                  const pct = stats.total > 0 ? Math.round((count / stats.total) * 100) : 0;
-                  const isActive = dayFilter === fest.id;
-                  return (
-                    <button
-                      key={fest.id}
-                      onClick={() => { setDayFilter(isActive ? 'ALL' : fest.id); setActiveFilter('ALL'); }}
-                      className={`text-left space-y-3 p-4 rounded-3xl border-2 transition-all group ${isActive ? 'border-[#0F4A2F] bg-[#EBF3EE] shadow-md' : 'border-transparent hover:bg-slate-50'}`}
-                    >
-                      <div className="flex items-end justify-between">
-                        <span className="text-[10px] font-black text-slate-500 uppercase group-hover:text-[#0F4A2F] transition-colors">{fest.label}</span>
-                        <span className="text-sm font-mono font-black text-slate-900">{count}</span>
-                      </div>
-                      <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                        <div className={`h-full transition-all duration-1000 ${isActive ? 'bg-[#0F4A2F]' : 'bg-[#E4B03A]'}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <p className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">{pct}% Daily Capacity</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="premium-card p-8 bg-[#FAF6EC] border-[#FEF3D6] shadow-md">
-               <h3 className="text-xs font-black text-[#E4B03A] uppercase tracking-widest mb-6 flex items-center gap-2">
-                 <Filter className="w-4 h-4" />
-                 Active View Scope
-               </h3>
-               <div className="space-y-4">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-500">Filtered Result:</span>
-                    <span className="font-black text-[#0F4A2F] text-lg">{filteredAttendees.length}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="pending" className="bg-white border-slate-200">{activeFilter}</Badge>
-                    {tierFilter !== 'ALL' && <Badge variant="gold">{tierFilter}</Badge>}
-                    {specificTierFilter !== 'ALL' && <Badge variant="pending">{specificTierFilter}</Badge>}
-                    {dayFilter !== 'ALL' && <Badge variant="success">{dayFilter.toUpperCase()}</Badge>}
-                    {regTimeScope !== 'ALL' && <Badge variant="pending" className="border-blue-200 text-blue-700">{regTimeScope}</Badge>}
-                  </div>
-                  <button
-                    onClick={() => {
-                        setActiveFilter('ALL');
-                        setTierFilter('ALL');
-                        setSpecificTierFilter('ALL');
-                        setDayFilter('ALL');
-                        setRegTimeScope('ALL');
-                        setSearchTerm('');
-                        setSelectedCustomDate('');
-                    }}
-                    className="w-full py-3 bg-white hover:bg-white/50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all mt-4 text-slate-500 hover:text-rose-600"
-                  >
-                    Reset All Dashboard Filters
-                  </button>
-               </div>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
+                  <th className="p-4">Ticket Code</th>
+                  <th className="p-4">Tier</th>
+                  <th className="p-4">Type</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4">Scanned At</th>
+                  <th className="p-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y text-xs">
+                {filteredTickets.length === 0 ? (
+                  <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No tickets found in database.</td></tr>
+                ) : (
+                  filteredTickets.map(t => (
+                    <tr key={t.id} className="hover:bg-slate-50">
+                      <td className="p-4 font-mono font-bold text-slate-900">{t.ticket_code || t.ticketCode}</td>
+                      <td className="p-4 uppercase font-black">{t.tier}</td>
+                      <td className="p-4">
+                        {t.is_manual ? <Badge variant="gold">MANUAL</Badge> : <Badge variant="pending">DIGITAL</Badge>}
+                      </td>
+                      <td className="p-4">
+                        <Badge variant={t.status === 'used' || t.status === 'CHECKED_IN' ? 'success' : t.status === 'valid' || t.status === 'REGISTERED' ? 'pending' : 'error'}>
+                          {t.status?.toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td className="p-4 text-slate-500">
+                        {t.scanned_at ? new Date(t.scanned_at).toLocaleTimeString() : 'Unscanned'}
+                      </td>
+                      <td className="p-4 text-right">
+                        <button
+                          onClick={() => handleToggleRevocation(t)}
+                          className={`p-2 rounded-xl text-xs font-bold ${t.status === 'revoked' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}
+                        >
+                          {t.status === 'revoked' ? 'Restore' : 'Revoke'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {/* Directory Table */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text" placeholder="Search attendee registry..."
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl text-sm font-medium focus:ring-2 focus:ring-[#0F4A2F]/10 transition-all"
-                value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-              />
+      {/* TAB 2: VENUE GATES */}
+      {activeTab === 'gates' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-black uppercase text-slate-900">Configured Venue Gates</h3>
+              <p className="text-[10px] text-slate-500 font-medium">Manage access checkpoints and entry gates</p>
             </div>
-            <div className="flex items-center gap-3">
-              <select
-                value={tierFilter}
-                onChange={e => setTierFilter(e.target.value)}
-                className="bg-slate-50 border-none rounded-2xl text-[10px] font-black uppercase tracking-widest py-4 px-6 focus:ring-2 focus:ring-[#0F4A2F]/10 cursor-pointer"
-              >
-                <option value="ALL">Classification</option>
-                <option value="VIP">VIPs Only</option>
-                <option value="NORMAL">Standard Only</option>
-              </select>
+            <Button icon={Plus} onClick={() => setShowGateModal(true)}>Add Venue Gate</Button>
+          </div>
 
-              <select
-                value={specificTierFilter}
-                onChange={e => setSpecificTierFilter(e.target.value)}
-                className="bg-slate-50 border-none rounded-2xl text-[10px] font-black uppercase tracking-widest py-4 px-6 focus:ring-2 focus:ring-[#0F4A2F]/10 cursor-pointer"
-              >
-                <option value="ALL">Exact Tier</option>
-                {Object.keys(ACCOUNT_TYPES).map(k => <option key={k} value={k}>{ACCOUNT_TYPES[k].label}</option>)}
-              </select>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {gates.map(gate => (
+              <div key={gate.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-black text-slate-900 uppercase">{gate.name}</h4>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">{gate.description || 'Access Point'}</p>
+                </div>
+                <button onClick={() => handleDeleteGate(gate.id)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
           </div>
         </div>
+      )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+      {/* TAB 3: STAFF & ROLES */}
+      {activeTab === 'staff' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6 overflow-x-auto">
+          <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
+
+          <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-slate-50/50 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
-                <th className="px-8 py-5">Attendee Detail</th>
-                <th className="px-8 py-5">Ticket Code</th>
-                <th className="px-8 py-5">Status & Attendance</th>
-                <th className="px-8 py-5 text-right">Gate Actions</th>
+              <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
+                <th className="p-4">Personnel</th>
+                <th className="p-4">Role</th>
+                <th className="p-4">Assigned Gate</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredAttendees.length === 0 ? (
-                <tr><td colSpan="4" className="px-8 py-24 text-center text-slate-400 italic font-medium">No results found matching your criteria.</td></tr>
+            <tbody className="divide-y">
+              {profiles.length === 0 ? (
+                <tr><td colSpan="3" className="p-8 text-center text-slate-400 italic">No profiles found in database.</td></tr>
               ) : (
-                filteredAttendees.map(attendee => {
-                  const roleConfig = ACCOUNT_TYPES[attendee.tier] || ACCOUNT_TYPES.REGULAR;
-                  const isRevoked = attendee.accessRevoked === true;
-
-                  return (
-                    <tr key={attendee.id} className={`hover:bg-slate-50/50 transition-colors group ${isRevoked ? 'bg-rose-50/30' : ''}`}>
-                      <td className="px-8 py-6">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-black text-slate-900">{attendee.fullName}</span>
-                          <span className="text-[11px] text-slate-500 font-medium">{attendee.email}</span>
-                          <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[9px] font-black uppercase mt-1.5 w-fit ${roleConfig.badgeBg}`}>
-                            {roleConfig.label}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <Badge variant="pending" className="font-mono bg-white border-slate-200 px-3">{attendee.ticketCode}</Badge>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex flex-col gap-2">
-                          <Badge variant={isRevoked ? 'error' : (attendee.status === 'CHECKED_IN' ? 'success' : 'pending')} className="w-fit">
-                            {isRevoked ? 'Access Revoked' : (attendee.status || 'REGISTERED').replace('_', ' ')}
-                          </Badge>
-                          <div className="flex gap-1.5">
-                             {['day1', 'day2', 'day3'].map(d => (
-                               <div key={d} className={`w-6 h-1.5 rounded-full transition-all ${attendee.daysAttended?.[d] ? 'bg-emerald-500 shadow-sm' : 'bg-slate-200'}`} title={`${d} attendance`} />
-                             ))}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="flex items-center justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                          {/* Role Upgrade Dropdown */}
-                          <div className="flex flex-col gap-1 items-end">
-                            <select
-                              value={attendee.role || 'attendee'}
-                              onChange={(e) => handleUpdateRole(attendee, e.target.value)}
-                              className="bg-white border border-slate-200 rounded-lg text-[9px] font-black uppercase py-1 px-2 focus:ring-2 focus:ring-[#0F4A2F]/10 cursor-pointer shadow-xs"
-                            >
-                              <option value="attendee">Attendee</option>
-                              <option value="gatekeeper">Staff</option>
-                              <option value="executive_admin">Admin</option>
-                            </select>
-                            <select
-                              value={attendee.tier || 'REGULAR'}
-                              onChange={(e) => handleUpgradeAccount(attendee, e.target.value)}
-                              className="bg-white border border-slate-200 rounded-lg text-[9px] font-black uppercase py-1 px-2 focus:ring-2 focus:ring-[#0F4A2F]/10 cursor-pointer shadow-xs"
-                            >
-                              {Object.keys(ACCOUNT_TYPES).map(k => <option key={k} value={k}>{ACCOUNT_TYPES[k].label}</option>)}
-                            </select>
-                          </div>
-
-                          <div className="h-8 w-[1px] bg-slate-100 mx-1" />
-
-                          {attendee.status !== 'CHECKED_IN' && !isRevoked && (
-                            <button onClick={() => handleManualCheckIn(attendee)} className="p-2.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl transition-colors shadow-sm border border-emerald-200" title="Manual Check-in">
-                              <CheckCircle2 className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button onClick={() => handleResetQR(attendee)} className="p-2.5 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200" title="Reset Ticket">
-                            <RotateCcw className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => handleToggleRevocation(attendee)} className={`p-2.5 rounded-xl transition-all border ${isRevoked ? 'bg-[#0F4A2F] text-white border-[#0F4A2F] shadow-md' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'}`} title={isRevoked ? 'Restore Access' : 'Revoke Access'}>
-                            {isRevoked ? <UserCheck2 className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                profiles.map(p => (
+                  <tr key={p.id} className="hover:bg-slate-50">
+                    <td className="p-4">
+                      <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
+                      <div className="text-[10px] text-slate-400">{p.email}</div>
+                    </td>
+                    <td className="p-4">
+                      <select
+                        value={p.role || 'user'}
+                        onChange={(e) => handleAssignRoleAndGate(p.id, e.target.value, p.assigned_gate_id)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer"
+                      >
+                        <option value="user">User</option>
+                        <option value="attendee">Attendee</option>
+                        <option value="gatekeeper">Gatekeeper</option>
+                        <option value="security">Security</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td className="p-4">
+                      <select
+                        value={p.assigned_gate_id || ''}
+                        onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer"
+                      >
+                        <option value="">Unassigned</option>
+                        {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
+
+      {/* TAB 4: GATEKEEPER AUDIT METRICS */}
+      {activeTab === 'audit' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
+          <div>
+            <h3 className="text-sm font-black uppercase text-slate-900">Gatekeeper Performance Audit</h3>
+            <p className="text-[10px] text-slate-500 font-medium">Scans processed and manual tickets created by personnel</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {gatekeeperAudit.length === 0 ? (
+              <p className="text-xs text-slate-400 italic p-4">No staff or gatekeepers registered yet.</p>
+            ) : (
+              gatekeeperAudit.map(gk => (
+                <div key={gk.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-slate-900 text-sm">{gk.full_name || gk.email}</span>
+                    <Badge variant="gold" className="uppercase text-[9px]">{gk.role}</Badge>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">Assigned: {gk.gates?.name || 'Unassigned Gate'}</p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t">
+                    <div className="bg-white p-3 rounded-xl text-center border">
+                      <span className="text-[9px] font-black uppercase text-slate-400 block">Scans Processed</span>
+                      <span className="text-xl font-black text-emerald-600">{gk.scansCount}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl text-center border">
+                      <span className="text-[9px] font-black uppercase text-slate-400 block">Manual Tickets</span>
+                      <span className="text-xl font-black text-amber-600">{gk.manualCount}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Gate Creation Modal */}
+      {showGateModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4">
+            <h3 className="text-sm font-black uppercase text-slate-900">Add New Venue Gate</h3>
+            <form onSubmit={handleCreateGate} className="space-y-4">
+              <Input
+                label="Gate Name"
+                placeholder="e.g. Gate 5 - South Pavilion"
+                required
+                value={newGateName}
+                onChange={e => setNewGateName(e.target.value)}
+              />
+              <Input
+                label="Description"
+                placeholder="e.g. VIP & Press Gate"
+                value={newGateDesc}
+                onChange={e => setNewGateDesc(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowGateModal(false)}>Cancel</Button>
+                <Button type="submit" className="flex-1">Create Gate</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
