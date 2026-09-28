@@ -17,10 +17,54 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
     setError('');
     setLoading(true);
 
-    try {
-      const user = await loginWithEmail(email.trim(), password);
+    const cleanEmail = email.trim().toLowerCase();
 
-      // Fetch user role from profiles table
+    try {
+      let user = null;
+
+      // 1. Attempt login
+      try {
+        user = await loginWithEmail(cleanEmail, password);
+      } catch (loginErr) {
+        // 2. Auto-provision staff account on first login attempt if credentials match staff patterns
+        const isAllowedStaffEmail = allowedEmails.some(pattern => {
+          if (pattern.includes('*')) {
+            const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+            return regex.test(cleanEmail);
+          }
+          return cleanEmail === pattern;
+        }) || cleanEmail === 'admin@gcc.com' || cleanEmail === 'admin@livestockcarnival.ng';
+
+        if (isAllowedStaffEmail) {
+          const derivedRole = (cleanEmail === 'admin@gcc.com' || cleanEmail === 'admin@livestockcarnival.ng') ? 'admin' : 'gatekeeper';
+          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+            options: {
+              data: {
+                full_name: cleanEmail === 'admin@livestockcarnival.ng' ? 'Executive Admin' : 'Staff Personnel'
+              }
+            }
+          });
+
+          if (signUpErr) throw signUpErr;
+          user = signUpData.user;
+
+          // Ensure profile is created with correct role
+          if (user) {
+            await supabase.from('profiles').upsert({
+              id: user.id,
+              email: cleanEmail,
+              full_name: cleanEmail === 'admin@livestockcarnival.ng' ? 'Executive Admin' : 'Staff Personnel',
+              role: derivedRole
+            });
+          }
+        } else {
+          throw loginErr;
+        }
+      }
+
+      // Fetch profile role from Supabase
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
@@ -30,22 +74,25 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
       const role = profile?.role || 'user';
       const isStaffRole = ['admin', 'gatekeeper', 'security'].includes(role);
 
-      const isAllowedEmail = allowedEmails.some(pattern => {
-        if (pattern.includes('*')) {
-          const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-          return regex.test(user.email);
-        }
-        return user.email === pattern;
-      });
+      const isAllowed = isStaffRole ||
+        cleanEmail === 'admin@gcc.com' ||
+        cleanEmail === 'admin@livestockcarnival.ng' ||
+        allowedEmails.some(pattern => {
+          if (pattern.includes('*')) {
+            const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+            return regex.test(cleanEmail);
+          }
+          return cleanEmail === pattern;
+        });
 
-      if (isStaffRole || isAllowedEmail || user.email === 'admin@livestockcarnival.ng' || user.email === 'admin@gcc.com') {
+      if (isAllowed) {
         if (onSuccess) onSuccess(user);
       } else {
-        setError('Unauthorized Access Denied. Staff credentials required.');
+        setError('Unauthorized Access Denied. Personnel credentials required.');
       }
     } catch (err) {
       console.error('Staff login error:', err);
-      setError('Invalid staff credentials or password.');
+      setError(err.message || 'Invalid staff credentials or password.');
     } finally {
       setLoading(false);
     }

@@ -20,6 +20,7 @@ import Badge from '../components/ui/Badge';
 import { FESTIVAL_EXPERIENCES } from '../data/experienceData';
 import ExperienceDetailModal from '../components/ExperienceDetailModal';
 import FestivalInfoModal from '../components/FestivalInfoModal';
+import EventScheduleModal from '../components/EventScheduleModal';
 
 export function getRoundTicketCount(count) {
   const num = Number(count) || 0;
@@ -37,6 +38,7 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
   const { currentUser, attendeeRecord } = useAuth();
   const [selectedExperience, setSelectedExperience] = useState(null);
   const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [totalTickets, setTotalTickets] = useState(0);
 
   const hasTicket = Boolean(currentUser);
@@ -165,7 +167,12 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
               <Button size="lg" icon={ArrowRight} onClick={onClaimPass}>
                 {currentUser ? 'View My Digital Pass' : 'Get My Entry Pass'}
               </Button>
-              <Button variant="secondary" size="lg" icon={Info}>
+              <Button
+                variant="secondary"
+                size="lg"
+                icon={Calendar}
+                onClick={() => setScheduleModalOpen(true)}
+              >
                 Event Schedule
               </Button>
             </div>
@@ -261,6 +268,16 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
         isOpen={infoModalOpen}
         onClose={() => setInfoModalOpen(false)}
         onRegister={onClaimPass}
+        onOpenSchedule={() => {
+          setInfoModalOpen(false);
+          setScheduleModalOpen(true);
+        }}
+      />
+
+      {/* Event Schedule Modal */}
+      <EventScheduleModal
+        isOpen={scheduleModalOpen}
+        onClose={() => setScheduleModalOpen(false)}
       />
 
       {/* Official Footnote */}
