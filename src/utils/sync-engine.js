@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { localDB, setConfig, getConfig } from '../lib/db-local';
+import { executeAtomicCheckIn } from './atomic-checkin';
 
 /**
  * syncValidationDataset
@@ -62,22 +63,17 @@ export async function processSyncQueue() {
     try {
       await localDB.scanQueue.update(item.operationId, { syncStatus: 'SYNCING' });
 
-      const { data, error } = await supabase.rpc('sync_scan_event', {
-        p_operation_id: item.operationId,
-        p_ticket_id: item.tid || item.ticketId,
-        p_uid: item.uid,
-        p_gate_id: item.gateId,
-        p_timestamp: item.timestamp,
-        p_event_day: item.eventDay,
-        p_source: 'OFFLINE'
-      });
+      const result = await executeAtomicCheckIn(
+        item.tid || item.ticketId,
+        item.gateId
+      );
 
-      if (!error && data?.success) {
+      if (result?.success || result?.status === 'VALID' || result?.status === 'DUPLICATE') {
         await localDB.scanQueue.update(item.operationId, { syncStatus: 'SYNCED' });
       } else {
         await localDB.scanQueue.update(item.operationId, {
           syncStatus: 'FAILED',
-          lastError: error?.message || data?.message || 'Sync failed'
+          lastError: result?.message || 'Sync failed'
         });
       }
     } catch (err) {
