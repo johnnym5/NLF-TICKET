@@ -116,6 +116,12 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
+  // Pagination States (max 100, switchable between 10, 25, 50, 100)
+  const [ticketPageSize, setTicketPageSize] = useState(100);
+  const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
+  const [profilePageSize, setProfilePageSize] = useState(100);
+  const [profileCurrentPage, setProfileCurrentPage] = useState(1);
+
   // Collapsible Panel State (Always Starts Closed)
   const [isRolesPanelOpen, setIsRolesPanelOpen] = useState(false);
 
@@ -654,6 +660,30 @@ export default function AdminCommandConsole({ onNavigate }) {
     });
   }, [tickets, searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate]);
 
+  // Reset pagination when filter criteria change
+  useEffect(() => {
+    setTicketCurrentPage(1);
+  }, [searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate, ticketPageSize]);
+
+  useEffect(() => {
+    setProfileCurrentPage(1);
+  }, [searchTerm, staffRoleFilter, profilePageSize]);
+
+  // Computed Paginated Subsets
+  const ticketTotalPages = Math.max(1, Math.ceil(filteredTickets.length / ticketPageSize));
+  const ticketStartIndex = (ticketCurrentPage - 1) * ticketPageSize;
+  const ticketEndIndex = Math.min(filteredTickets.length, ticketStartIndex + ticketPageSize);
+  const paginatedTickets = useMemo(() => {
+    return filteredTickets.slice(ticketStartIndex, ticketEndIndex);
+  }, [filteredTickets, ticketStartIndex, ticketEndIndex]);
+
+  const profileTotalPages = Math.max(1, Math.ceil(filteredProfiles.length / profilePageSize));
+  const profileStartIndex = (profileCurrentPage - 1) * profilePageSize;
+  const profileEndIndex = Math.min(filteredProfiles.length, profileStartIndex + profilePageSize);
+  const paginatedProfiles = useMemo(() => {
+    return filteredProfiles.slice(profileStartIndex, profileEndIndex);
+  }, [filteredProfiles, profileStartIndex, profileEndIndex]);
+
   if (!isAuthenticated) return <StaffLogin title="Executive Command Console" subtitle="Admin Verification Required" allowedEmails={['admin@gcc.com', 'admin@livestockcarnival.ng']} onSuccess={() => setIsAuthenticated(true)} />;
 
   return (
@@ -1033,7 +1063,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                 {filteredTickets.length === 0 ? (
                   <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No tickets found in database.</td></tr>
                 ) : (
-                  filteredTickets.map(t => (
+                  paginatedTickets.map(t => (
                     <tr key={t.id} className="hover:bg-slate-50">
                       <td className="p-4 font-mono font-bold text-slate-900">{t.ticket_code || t.ticketCode}</td>
                       <td className="p-4 uppercase font-black">{t.tier}</td>
@@ -1062,6 +1092,57 @@ export default function AdminCommandConsole({ onNavigate }) {
               </tbody>
             </table>
           </div>
+
+          {/* Ticket Pagination Bar */}
+          {filteredTickets.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                <span>Show:</span>
+                {[10, 25, 50, 100].map(size => (
+                  <button
+                    key={size}
+                    onClick={() => { setTicketPageSize(size); setTicketCurrentPage(1); }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
+                      ticketPageSize === size
+                        ? 'bg-[#0F4A2F] text-white shadow-xs scale-105'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+                <span>per page</span>
+              </div>
+
+              <span className="text-xs font-bold text-slate-500">
+                Showing {filteredTickets.length > 0 ? ticketStartIndex + 1 : 0}–{ticketEndIndex} of {filteredTickets.length} tickets
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setTicketCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={ticketCurrentPage === 1}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-all"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <span className="text-xs font-black text-slate-800 px-3">
+                  Page {ticketCurrentPage} of {ticketTotalPages}
+                </span>
+
+                <button
+                  onClick={() => setTicketCurrentPage(p => Math.min(ticketTotalPages, p + 1))}
+                  disabled={ticketCurrentPage >= ticketTotalPages}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-all"
+                  title="Next Page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1137,7 +1218,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               {filteredProfiles.length === 0 ? (
                 <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
               ) : (
-                filteredProfiles.map(p => {
+                paginatedProfiles.map(p => {
                   const online = isUserOnline(p.last_seen_at);
                   const isStaff = isStaffRole(p.role);
                   const wristband = getRoleWristbandObj(p.role);
@@ -1221,6 +1302,57 @@ export default function AdminCommandConsole({ onNavigate }) {
               )}
             </tbody>
           </table>
+
+          {/* Personnel Pagination Bar */}
+          {filteredProfiles.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                <span>Show:</span>
+                {[10, 25, 50, 100].map(size => (
+                  <button
+                    key={size}
+                    onClick={() => { setProfilePageSize(size); setProfileCurrentPage(1); }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
+                      profilePageSize === size
+                        ? 'bg-[#0F4A2F] text-white shadow-xs scale-105'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+                <span>per page</span>
+              </div>
+
+              <span className="text-xs font-bold text-slate-500">
+                Showing {filteredProfiles.length > 0 ? profileStartIndex + 1 : 0}–{profileEndIndex} of {filteredProfiles.length} accounts
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setProfileCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={profileCurrentPage === 1}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-all"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <span className="text-xs font-black text-slate-800 px-3">
+                  Page {profileCurrentPage} of {profileTotalPages}
+                </span>
+
+                <button
+                  onClick={() => setProfileCurrentPage(p => Math.min(profileTotalPages, p + 1))}
+                  disabled={profileCurrentPage >= profileTotalPages}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-all"
+                  title="Next Page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
