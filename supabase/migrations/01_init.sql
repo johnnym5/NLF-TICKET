@@ -5,7 +5,9 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_roles') THEN
-    CREATE TYPE public.user_roles AS ENUM ('admin', 'gatekeeper', 'security', 'attendee', 'user');
+    CREATE TYPE public.user_roles AS ENUM ('admin', 'gatekeeper', 'security', 'team_member', 'attendee', 'user');
+  ELSE
+    ALTER TYPE public.user_roles ADD VALUE IF NOT EXISTS 'team_member';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ticket_tier') THEN
     CREATE TYPE public.ticket_tier AS ENUM ('general', 'vip_1', 'vip_2', 'vip_3');
@@ -40,9 +42,13 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   full_name TEXT,
   role public.user_roles NOT NULL DEFAULT 'user'::public.user_roles,
   assigned_gate_id UUID REFERENCES public.gates(id) ON DELETE SET NULL,
+  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add column if profiles existed before
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW();
 
 -- 4. Tickets Table (Enterprise Box-Office Schema)
 CREATE TABLE public.tickets (

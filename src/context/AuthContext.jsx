@@ -74,11 +74,31 @@ export function generateTicketCode(tier = 'general') {
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
-  const [userRole, setUserRole] = useState('user'); // admin, gatekeeper, security, attendee, user
+  const [userRole, setUserRole] = useState('user'); // admin, gatekeeper, security, team_member, attendee, user
   const [userTicket, setUserTicket] = useState(null);
   const [assignedGate, setAssignedGate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isNewRegistration, setIsNewRegistration] = useState(false);
+
+  // Periodic Heartbeat to maintain last_seen_at telemetry
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const pingHeartbeat = async () => {
+      try {
+        await supabase
+          .from('profiles')
+          .update({ last_seen_at: new Date().toISOString() })
+          .eq('id', currentUser.id);
+      } catch (e) {
+        // Ignore silent heartbeat errors
+      }
+    };
+
+    pingHeartbeat();
+    const interval = setInterval(pingHeartbeat, 60000); // Heartbeat every 60s
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   useEffect(() => {
     let profileChannel = null;
@@ -277,7 +297,7 @@ export function AuthProvider({ children }) {
       if (insertErr) throw insertErr;
 
       // Update role to attendee in profiles table
-      const isStaffOrAdmin = ['admin', 'gatekeeper', 'security'].includes(userRole);
+      const isStaffOrAdmin = ['admin', 'gatekeeper', 'security', 'team_member'].includes(userRole);
       if (!isStaffOrAdmin) {
         await supabase
           .from('profiles')
@@ -396,7 +416,6 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     const user = data.user;
     if (user) {
-      // Auto-ensure ticket if user doesn't have one
       try {
         await ensureUserTicket(user, user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
       } catch (e) {

@@ -36,7 +36,10 @@ import {
   Shield,
   Plus,
   Trash2,
-  ClipboardList
+  ClipboardList,
+  Wifi,
+  WifiOff,
+  UserPlus
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -56,6 +59,26 @@ export const ACCOUNT_TYPES = {
   VIP_PLATINUM: { label: 'Platinum Protocol', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700' }
 };
 
+function formatLastSeen(dateStr) {
+  if (!dateStr) return 'Never';
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 2) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function isUserOnline(lastSeenStr) {
+  if (!lastSeenStr) return false;
+  const diffMs = new Date() - new Date(lastSeenStr);
+  return diffMs < 120000; // Online if pinged within last 2 minutes
+}
+
 export default function AdminCommandConsole({ onNavigate }) {
   const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -72,13 +95,13 @@ export default function AdminCommandConsole({ onNavigate }) {
   // Filter States
   const [showExecutiveDashboard, setShowExecutiveDashboard] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeFilter, setActiveFilter] = useState('ALL'); // ALL, CHECKED_IN, PENDING, REVOKED
+  const [activeFilter, setActiveFilter] = useState('ALL');
   const [tierFilter, setTierFilter] = useState('ALL');
-  const [staffRoleFilter, setStaffRoleFilter] = useState('ALL'); // ALL, STAFF, ATTENDEE, USER
+  const [staffRoleFilter, setStaffRoleFilter] = useState('ALL');
   const [dayFilter, setDayFilter] = useState('ALL');
 
   // Advanced Registration Time Filtering
-  const [regTimeScope, setRegTimeScope] = useState('ALL'); // ALL, TODAY, THIS_WEEK, THIS_MONTH
+  const [regTimeScope, setRegTimeScope] = useState('ALL');
   const [selectedCustomDate, setSelectedCustomDate] = useState('');
 
   // Gate Form State
@@ -304,29 +327,30 @@ export default function AdminCommandConsole({ onNavigate }) {
     return true;
   };
 
+  // Comprehensive Daily/Weekly/Monthly Ingestion Statistics
   const stats = useMemo(() => {
-    const scopeTickets = tickets.filter(t => isInTimeScope(t.created_at || t.createdAt, regTimeScope));
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0,0,0,0);
 
-    const total = scopeTickets.length;
-    const checkedIn = scopeTickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
-    const pending = scopeTickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
-    const revoked = scopeTickets.filter(t => t.status === 'revoked').length;
-    const manualCount = scopeTickets.filter(t => t.is_manual).length;
+    const total = tickets.length;
+    const ticketsToday = tickets.filter(t => new Date(t.created_at || t.createdAt).toDateString() === now.toDateString()).length;
+    const ticketsThisWeek = tickets.filter(t => new Date(t.created_at || t.createdAt) >= startOfWeek).length;
+    const ticketsThisMonth = tickets.filter(t => new Date(t.created_at || t.createdAt).getMonth() === now.getMonth()).length;
 
-    const dayDistribution = { day1: 0, day2: 0, day3: 0 };
-    scopeTickets.forEach(t => {
-      if (t.status === 'used' || t.status === 'CHECKED_IN') {
-        dayDistribution.day1++;
-      }
-    });
+    const checkedIn = tickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
+    const pending = tickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
+    const revoked = tickets.filter(t => t.status === 'revoked').length;
+    const manualCount = tickets.filter(t => t.is_manual).length;
 
     const turnoutRate = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
 
-    return { total, checkedIn, pending, revoked, manualCount, dayDistribution, turnoutRate };
-  }, [tickets, regTimeScope, selectedCustomDate]);
+    return { total, ticketsToday, ticketsThisWeek, ticketsThisMonth, checkedIn, pending, revoked, manualCount, turnoutRate };
+  }, [tickets]);
 
   const gatekeeperAudit = useMemo(() => {
-    const staffProfiles = profiles.filter(p => ['admin', 'gatekeeper', 'security'].includes(p.role));
+    const staffProfiles = profiles.filter(p => ['admin', 'gatekeeper', 'security', 'team_member'].includes(p.role));
 
     return staffProfiles.map(staff => {
       const scansCount = tickets.filter(t => t.scanned_by === staff.id).length;
@@ -349,7 +373,7 @@ export default function AdminCommandConsole({ onNavigate }) {
       if (!matchesSearch) return false;
 
       if (staffRoleFilter === 'STAFF') {
-        return ['admin', 'gatekeeper', 'security'].includes(p.role);
+        return ['admin', 'gatekeeper', 'security', 'team_member'].includes(p.role);
       }
       if (staffRoleFilter === 'ATTENDEE') {
         return p.role === 'attendee';
@@ -488,13 +512,27 @@ export default function AdminCommandConsole({ onNavigate }) {
           )}
         </div>
 
-        {/* Calendar Velocity & Timeframe Filter */}
+        {/* Daily / Weekly / Monthly Intake Counters & Calendar Filter */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-slate-100 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest mr-2 flex items-center gap-1.5">
                 <CalendarRange className="w-3.5 h-3.5" />
-                Calendar Filter:
+                Ticket Ingestion Velocity:
             </span>
+            <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase">
+              <span className="bg-emerald-50 text-emerald-800 px-3 py-1 rounded-xl border border-emerald-200">
+                Today: <strong className="text-slate-900">{stats.ticketsToday}</strong>
+              </span>
+              <span className="bg-blue-50 text-blue-800 px-3 py-1 rounded-xl border border-blue-200">
+                This Week: <strong className="text-slate-900">{stats.ticketsThisWeek}</strong>
+              </span>
+              <span className="bg-purple-50 text-purple-800 px-3 py-1 rounded-xl border border-purple-200">
+                This Month: <strong className="text-slate-900">{stats.ticketsThisMonth}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             {[
                 { id: 'ALL', label: 'Lifetime' },
                 { id: 'TODAY', label: 'Today' },
@@ -509,29 +547,29 @@ export default function AdminCommandConsole({ onNavigate }) {
                     {btn.label}
                 </button>
             ))}
-          </div>
 
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
-              <button
-                  onClick={() => handleAdjustDate(-1)}
-                  className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                  title="Previous Day"
-              >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <input
-                  type="date"
-                  value={selectedCustomDate}
-                  onChange={(e) => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); }}
-                  className="bg-transparent border-none text-[10px] font-bold text-slate-700 outline-none focus:ring-0 w-28"
-              />
-              <button
-                  onClick={() => handleAdjustDate(1)}
-                  className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                  title="Next Day"
-              >
-                  <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
+                <button
+                    onClick={() => handleAdjustDate(-1)}
+                    className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
+                    title="Previous Day"
+                >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <input
+                    type="date"
+                    value={selectedCustomDate}
+                    onChange={(e) => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); }}
+                    className="bg-transparent border-none text-[10px] font-bold text-slate-700 outline-none focus:ring-0 w-28"
+                />
+                <button
+                    onClick={() => handleAdjustDate(1)}
+                    className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
+                    title="Next Day"
+                >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+            </div>
           </div>
         </div>
       </div>
@@ -666,13 +704,13 @@ export default function AdminCommandConsole({ onNavigate }) {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
               <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Promote users to Staff/Admin or downgrade Staff to Attendee/User</p>
+              <p className="text-[10px] text-slate-500 font-medium">Promote users to Staff/Admin/Team or downgrade Staff to Attendee/User</p>
             </div>
 
             <div className="flex items-center gap-2">
               {[
                 { id: 'ALL', label: 'All Accounts' },
-                { id: 'STAFF', label: 'Staff Only' },
+                { id: 'STAFF', label: 'Staff & Team' },
                 { id: 'ATTENDEE', label: 'Attendees' },
                 { id: 'USER', label: 'Unassigned Users' }
               ].map(f => (
@@ -691,45 +729,61 @@ export default function AdminCommandConsole({ onNavigate }) {
             <thead>
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                 <th className="p-4">Personnel</th>
+                <th className="p-4">Status & Telemetry</th>
                 <th className="p-4">Assigned Role</th>
                 <th className="p-4">Assigned Gate</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {filteredProfiles.length === 0 ? (
-                <tr><td colSpan="3" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
+                <tr><td colSpan="4" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
               ) : (
-                filteredProfiles.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="p-4">
-                      <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
-                      <div className="text-[10px] text-slate-400">{p.email}</div>
-                    </td>
-                    <td className="p-4">
-                      <select
-                        value={p.role || 'user'}
-                        onChange={(e) => handleAssignRoleAndGate(p.id, e.target.value, p.assigned_gate_id)}
-                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer shadow-xs"
-                      >
-                        <option value="user">USER (Unassigned)</option>
-                        <option value="attendee">ATTENDEE (Pass Holder)</option>
-                        <option value="gatekeeper">GATEKEEPER (Staff)</option>
-                        <option value="security">SECURITY (Steward)</option>
-                        <option value="admin">ADMIN (Executive)</option>
-                      </select>
-                    </td>
-                    <td className="p-4">
-                      <select
-                        value={p.assigned_gate_id || ''}
-                        onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
-                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer shadow-xs"
-                      >
-                        <option value="">Unassigned</option>
-                        {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                      </select>
-                    </td>
-                  </tr>
-                ))
+                filteredProfiles.map(p => {
+                  const online = isUserOnline(p.last_seen_at);
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-50">
+                      <td className="p-4">
+                        <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
+                        <div className="text-[10px] text-slate-400">{p.email}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                          <span className="text-[10px] font-extrabold uppercase text-slate-600">
+                            {online ? 'Online' : 'Offline'}
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-0.5">
+                          Seen: {formatLastSeen(p.last_seen_at)}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <select
+                          value={p.role || 'user'}
+                          onChange={(e) => handleAssignRoleAndGate(p.id, e.target.value, p.assigned_gate_id)}
+                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer shadow-xs"
+                        >
+                          <option value="user">USER (Unassigned)</option>
+                          <option value="attendee">ATTENDEE (Pass Holder)</option>
+                          <option value="team_member">TEAM MEMBER (Official)</option>
+                          <option value="gatekeeper">GATEKEEPER (Staff)</option>
+                          <option value="security">SECURITY (Steward)</option>
+                          <option value="admin">ADMIN (Executive)</option>
+                        </select>
+                      </td>
+                      <td className="p-4">
+                        <select
+                          value={p.assigned_gate_id || ''}
+                          onChange={(e) => handleAssignRoleAndGate(p.id, p.role, e.target.value)}
+                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold cursor-pointer shadow-xs"
+                        >
+                          <option value="">Unassigned</option>
+                          {gates.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -741,33 +795,44 @@ export default function AdminCommandConsole({ onNavigate }) {
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
           <div>
             <h3 className="text-sm font-black uppercase text-slate-900">Gatekeeper Performance Audit</h3>
-            <p className="text-[10px] text-slate-500 font-medium">Scans processed and manual tickets created by personnel</p>
+            <p className="text-[10px] text-slate-500 font-medium">Scans processed, active telemetry, and manual tickets created by personnel</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {gatekeeperAudit.length === 0 ? (
               <p className="text-xs text-slate-400 italic p-4">No staff or gatekeepers registered yet.</p>
             ) : (
-              gatekeeperAudit.map(gk => (
-                <div key={gk.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-slate-900 text-sm">{gk.full_name || gk.email}</span>
-                    <Badge variant="gold" className="uppercase text-[9px]">{gk.role}</Badge>
-                  </div>
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Assigned: {gk.gates?.name || 'Unassigned Gate'}</p>
+              gatekeeperAudit.map(gk => {
+                const online = isUserOnline(gk.last_seen_at);
+                return (
+                  <div key={gk.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-black text-slate-900 text-sm">{gk.full_name || gk.email}</span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                          <span className="text-[9px] font-bold text-slate-400 uppercase">
+                            {online ? 'Online' : 'Offline'} • Last seen {formatLastSeen(gk.last_seen_at)}
+                          </span>
+                        </div>
+                      </div>
+                      <Badge variant="gold" className="uppercase text-[9px]">{gk.role}</Badge>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase">Assigned: {gk.gates?.name || 'Unassigned Gate'}</p>
 
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t">
-                    <div className="bg-white p-3 rounded-xl text-center border">
-                      <span className="text-[9px] font-black uppercase text-slate-400 block">Scans Processed</span>
-                      <span className="text-xl font-black text-emerald-600">{gk.scansCount}</span>
-                    </div>
-                    <div className="bg-white p-3 rounded-xl text-center border">
-                      <span className="text-[9px] font-black uppercase text-slate-400 block">Manual Tickets</span>
-                      <span className="text-xl font-black text-amber-600">{gk.manualCount}</span>
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t">
+                      <div className="bg-white p-3 rounded-xl text-center border">
+                        <span className="text-[9px] font-black uppercase text-slate-400 block">Scans Processed</span>
+                        <span className="text-xl font-black text-emerald-600">{gk.scansCount}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl text-center border">
+                        <span className="text-[9px] font-black uppercase text-slate-400 block">Manual Tickets</span>
+                        <span className="text-xl font-black text-amber-600">{gk.manualCount}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
