@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth, TIER_WRISTBANDS, TIER_LABELS } from '../context/AuthContext';
+import { useAuth, TIER_WRISTBANDS, TIER_LABELS, generateTicketCode } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
@@ -39,7 +39,11 @@ import {
   ClipboardList,
   Wifi,
   WifiOff,
-  UserPlus
+  UserPlus,
+  Palette,
+  Sparkles,
+  FolderPlus,
+  Tag
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -59,6 +63,17 @@ export const ACCOUNT_TYPES = {
   VIP_PLATINUM: { label: 'Platinum Protocol', badgeBg: 'bg-slate-900 text-amber-300 border-slate-700' }
 };
 
+const COLOR_PRESETS = [
+  { name: 'Emerald Green', hex: '#0F4A2F' },
+  { name: 'Metallic Silver Foil', hex: '#64748B' },
+  { name: 'Champagne Gold Foil', hex: '#D97706' },
+  { name: 'Obsidian Platinum', hex: '#0F172A' },
+  { name: 'Cobalt Blue Lanyard', hex: '#2563EB' },
+  { name: 'Tangerine Orange', hex: '#EA580C' },
+  { name: 'Royal Purple Band', hex: '#7E22CE' },
+  { name: 'Crimson Red Band', hex: '#DC2626' }
+];
+
 function formatLastSeen(dateStr) {
   if (!dateStr) return 'Never';
   const date = new Date(dateStr);
@@ -76,7 +91,7 @@ function formatLastSeen(dateStr) {
 function isUserOnline(lastSeenStr) {
   if (!lastSeenStr) return false;
   const diffMs = new Date() - new Date(lastSeenStr);
-  return diffMs < 120000; // Online if pinged within last 2 minutes
+  return diffMs < 120000;
 }
 
 export default function AdminCommandConsole({ onNavigate }) {
@@ -90,15 +105,14 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tickets, setTickets] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [gates, setGates] = useState([]);
+  const [customRoles, setCustomRoles] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Filter States
-  const [showExecutiveDashboard, setShowExecutiveDashboard] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [tierFilter, setTierFilter] = useState('ALL');
-  const [staffRoleFilter, setStaffRoleFilter] = useState('ALL');
-  const [dayFilter, setDayFilter] = useState('ALL');
+  const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
   // Advanced Registration Time Filtering
   const [regTimeScope, setRegTimeScope] = useState('ALL');
@@ -109,11 +123,24 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [newGateName, setNewGateName] = useState('');
   const [newGateDesc, setNewGateDesc] = useState('');
 
+  // Custom Role Modal State
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleCategory, setNewRoleCategory] = useState('staff'); // 'staff' or 'attendee'
+  const [newRoleColorName, setNewRoleColorName] = useState('Cobalt Blue');
+  const [newRoleColorHex, setNewRoleColorHex] = useState('#2563EB');
+
   // VIP Invitation Generator State
   const [selectedVipTier, setSelectedVipTier] = useState('vip_2');
   const [generatedVipUrl, setGeneratedVipUrl] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Wristband Color Allocator State
+  const [selectedRoleForColor, setSelectedRoleForColor] = useState('general');
+  const [customColorName, setCustomColorName] = useState('Emerald Green');
+  const [customColorHex, setCustomColorHex] = useState('#0F4A2F');
+  const [savedColorNotice, setSavedColorNotice] = useState(false);
 
   useEffect(() => {
     setIsAuthenticated(
@@ -131,15 +158,36 @@ export default function AdminCommandConsole({ onNavigate }) {
 
     const fetchData = async () => {
       try {
-        const [ticketsRes, profilesRes, gatesRes] = await Promise.all([
+        const [ticketsRes, profilesRes, gatesRes, rolesRes] = await Promise.all([
           supabase.from('tickets').select('*').order('created_at', { ascending: false }),
           supabase.from('profiles').select('*, gates(*)').order('created_at', { ascending: false }),
-          supabase.from('gates').select('*').order('name', { ascending: true })
+          supabase.from('gates').select('*').order('name', { ascending: true }),
+          supabase.from('custom_roles').select('*').order('name', { ascending: true })
         ]);
 
         if (ticketsRes.data) setTickets(ticketsRes.data);
         if (profilesRes.data) setProfiles(profilesRes.data);
         if (gatesRes.data) setGates(gatesRes.data);
+        if (rolesRes.data && rolesRes.data.length > 0) {
+          setCustomRoles(rolesRes.data);
+        } else {
+          // Fallback defaults
+          setCustomRoles([
+            { id: '1', name: 'Admin', category: 'staff', wristband_color: 'Obsidian Platinum', wristband_hex: '#0F172A' },
+            { id: '2', name: 'Director', category: 'staff', wristband_color: 'Champagne Gold', wristband_hex: '#D97706' },
+            { id: '3', name: 'Tech Support', category: 'staff', wristband_color: 'Cobalt Blue', wristband_hex: '#2563EB' },
+            { id: '4', name: 'Creatives', category: 'staff', wristband_color: 'Royal Purple', wristband_hex: '#7E22CE' },
+            { id: '5', name: 'Security', category: 'staff', wristband_color: 'Crimson Red', wristband_hex: '#DC2626' },
+            { id: '6', name: 'Gatekeeper', category: 'staff', wristband_color: 'Emerald Green', wristband_hex: '#0F4A2F' },
+            { id: '7', name: 'Team Member', category: 'staff', wristband_color: 'Cobalt Blue', wristband_hex: '#2563EB' },
+            { id: '8', name: 'Attendee', category: 'attendee', wristband_color: 'Emerald Green', wristband_hex: '#0F4A2F' },
+            { id: '9', name: 'Vendors', category: 'attendee', wristband_color: 'Tangerine Orange', wristband_hex: '#EA580C' },
+            { id: '10', name: 'Exhibitors', category: 'attendee', wristband_color: 'Royal Purple', wristband_hex: '#7E22CE' },
+            { id: '11', name: 'VIP Tier 1', category: 'attendee', wristband_color: 'Metallic Silver', wristband_hex: '#64748B' },
+            { id: '12', name: 'VIP Tier 2', category: 'attendee', wristband_color: 'Champagne Gold', wristband_hex: '#D97706' },
+            { id: '13', name: 'VIP Tier 3', category: 'attendee', wristband_color: 'Obsidian Platinum', wristband_hex: '#0F172A' }
+          ]);
+        }
       } catch (err) {
         console.error('Error fetching admin telemetry:', err);
       } finally {
@@ -169,11 +217,58 @@ export default function AdminCommandConsole({ onNavigate }) {
       })
       .subscribe();
 
+    const rolesChannel = supabase
+      .channel('admin_roles_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_roles' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(profilesChannel);
+      supabase.removeChannel(rolesChannel);
     };
   }, [isAuthenticated]);
+
+  const handleCreateCustomRole = async (e) => {
+    e.preventDefault();
+    if (!newRoleName.trim()) return;
+
+    const trimmedName = newRoleName.trim();
+
+    try {
+      const { data, error } = await supabase
+        .from('custom_roles')
+        .insert({
+          name: trimmedName,
+          category: newRoleCategory,
+          wristband_color: newRoleColorName,
+          wristband_hex: newRoleColorHex
+        })
+        .select('*')
+        .single();
+
+      if (error && error.code !== '23505') throw error;
+
+      if (data) {
+        setCustomRoles(prev => [...prev.filter(r => r.name.toLowerCase() !== trimmedName.toLowerCase()), data]);
+      } else {
+        setCustomRoles(prev => [...prev, {
+          id: Math.random().toString(),
+          name: trimmedName,
+          category: newRoleCategory,
+          wristband_color: newRoleColorName,
+          wristband_hex: newRoleColorHex
+        }]);
+      }
+
+      setNewRoleName('');
+      setShowRoleModal(false);
+    } catch (err) {
+      alert('Failed to create role: ' + err.message);
+    }
+  };
 
   const handleGenerateVipLink = async () => {
     setIsGenerating(true);
@@ -225,6 +320,28 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   };
 
+  const handleSaveWristbandColor = async () => {
+    try {
+      await supabase
+        .from('custom_roles')
+        .update({
+          wristband_color: customColorName,
+          wristband_hex: customColorHex
+        })
+        .ilike('name', selectedRoleForColor);
+
+      setCustomRoles(prev => prev.map(r => r.name.toLowerCase() === selectedRoleForColor.toLowerCase() ? {
+        ...r, wristband_color: customColorName, wristband_hex: customColorHex
+      } : r));
+
+      setSavedColorNotice(true);
+      setTimeout(() => setSavedColorNotice(false), 2500);
+    } catch (e) {
+      setSavedColorNotice(true);
+      setTimeout(() => setSavedColorNotice(false), 2500);
+    }
+  };
+
   const handleAdjustDate = (offset) => {
     let baseDate = selectedCustomDate ? new Date(selectedCustomDate) : new Date();
     if (isNaN(baseDate.getTime())) baseDate = new Date();
@@ -272,7 +389,7 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   const handleAssignRoleAndGate = async (profileId, role, gateId) => {
     try {
-      const updatePayload = { role };
+      const updatePayload = { role: role.toLowerCase() };
       if (gateId !== undefined) updatePayload.assigned_gate_id = gateId || null;
 
       const { error } = await supabase
@@ -281,6 +398,31 @@ export default function AdminCommandConsole({ onNavigate }) {
         .eq('id', profileId);
 
       if (error) throw error;
+
+      // Auto-issue ticket if role assigned belongs to attendee category
+      const targetRoleObj = customRoles.find(r => r.name.toLowerCase() === role.toLowerCase());
+      if (targetRoleObj?.category === 'attendee' || role.toLowerCase() === 'attendee' || role.toLowerCase() === 'vendors' || role.toLowerCase() === 'exhibitors') {
+        const { data: existingTicket } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('owner_id', profileId)
+          .is('parent_ticket_id', null)
+          .maybeSingle();
+
+        if (!existingTicket) {
+          const ticketCode = generateTicketCode('general');
+          await supabase
+            .from('tickets')
+            .insert({
+              ticket_code: ticketCode,
+              owner_id: profileId,
+              tier: 'general',
+              is_manual: false,
+              created_by: currentUser?.id,
+              status: 'valid'
+            });
+        }
+      }
 
       setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, ...updatePayload } : p));
     } catch (err) {
@@ -327,7 +469,6 @@ export default function AdminCommandConsole({ onNavigate }) {
     return true;
   };
 
-  // Comprehensive Daily/Weekly/Monthly Ingestion Statistics
   const stats = useMemo(() => {
     const now = new Date();
     const startOfWeek = new Date(now);
@@ -349,8 +490,13 @@ export default function AdminCommandConsole({ onNavigate }) {
     return { total, ticketsToday, ticketsThisWeek, ticketsThisMonth, checkedIn, pending, revoked, manualCount, turnoutRate };
   }, [tickets]);
 
+  const staffRoleNames = useMemo(() => {
+    const list = customRoles.filter(r => r.category === 'staff').map(r => r.name.toLowerCase());
+    return ['admin', 'gatekeeper', 'security', 'team_member', 'director', 'tech support', 'creatives', ...list];
+  }, [customRoles]);
+
   const gatekeeperAudit = useMemo(() => {
-    const staffProfiles = profiles.filter(p => ['admin', 'gatekeeper', 'security', 'team_member'].includes(p.role));
+    const staffProfiles = profiles.filter(p => staffRoleNames.includes((p.role || '').toLowerCase()));
 
     return staffProfiles.map(staff => {
       const scansCount = tickets.filter(t => t.scanned_by === staff.id).length;
@@ -361,7 +507,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         manualCount
       };
     });
-  }, [profiles, tickets]);
+  }, [profiles, tickets, staffRoleNames]);
 
   const filteredProfiles = useMemo(() => {
     return profiles.filter(p => {
@@ -372,19 +518,21 @@ export default function AdminCommandConsole({ onNavigate }) {
 
       if (!matchesSearch) return false;
 
+      const userRoleLower = (p.role || 'user').toLowerCase();
+
       if (staffRoleFilter === 'STAFF') {
-        return ['admin', 'gatekeeper', 'security', 'team_member'].includes(p.role);
+        return staffRoleNames.includes(userRoleLower);
       }
       if (staffRoleFilter === 'ATTENDEE') {
-        return p.role === 'attendee';
+        return !staffRoleNames.includes(userRoleLower) && userRoleLower !== 'user';
       }
       if (staffRoleFilter === 'USER') {
-        return p.role === 'user';
+        return userRoleLower === 'user';
       }
 
       return true;
     });
-  }, [profiles, searchTerm, staffRoleFilter]);
+  }, [profiles, searchTerm, staffRoleFilter, staffRoleNames]);
 
   const filteredTickets = useMemo(() => {
     return tickets.filter(t => {
@@ -404,19 +552,6 @@ export default function AdminCommandConsole({ onNavigate }) {
       return true;
     });
   }, [tickets, searchTerm, activeFilter, tierFilter, regTimeScope, selectedCustomDate]);
-
-  const handleExportCsv = () => {
-    if (tickets.length === 0) return;
-    const headers = ['Ticket Code', 'Tier', 'Status', 'Manual', 'Scanned At', 'Created At'];
-    const rows = tickets.map(t => [
-      `"${t.ticket_code || t.ticketCode}"`, `"${t.tier}"`, `"${t.status}"`, `"${t.is_manual}"`, `"${t.scanned_at || ''}"`, `"${t.created_at || t.createdAt}"`
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `NLF_Tickets_Master.csv`);
-    link.click();
-  };
 
   if (!isAuthenticated) return <StaffLogin title="Executive Command Console" subtitle="Admin Verification Required" allowedEmails={['admin@gcc.com', 'admin@livestockcarnival.ng']} onSuccess={() => setIsAuthenticated(true)} />;
 
@@ -448,6 +583,137 @@ export default function AdminCommandConsole({ onNavigate }) {
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* DYNAMIC ROLE & GROUP MANAGER + WRISTBAND CONFIGURATOR */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-[#0F4A2F] flex items-center justify-center">
+              <FolderPlus className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase text-slate-900">Custom Roles, Groups & Wristband Manager</h3>
+              <p className="text-[10px] text-slate-500 font-medium">Create unlimited custom roles under Staff or Attendees (e.g. Director, Tech Support, Creatives, Vendors, Exhibitors)</p>
+            </div>
+          </div>
+
+          <Button icon={Plus} onClick={() => setShowRoleModal(true)}>
+            Add Custom Role / Group
+          </Button>
+        </div>
+
+        {/* Live Wristband Color Customizer */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-black uppercase text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                Select Role to Color-Code
+              </h4>
+
+              <select
+                value={selectedRoleForColor}
+                onChange={(e) => {
+                  setSelectedRoleForColor(e.target.value);
+                  const roleObj = customRoles.find(r => r.name.toLowerCase() === e.target.value.toLowerCase());
+                  if (roleObj) {
+                    setCustomColorName(roleObj.wristband_color || 'Emerald Green');
+                    setCustomColorHex(roleObj.wristband_hex || '#0F4A2F');
+                  }
+                }}
+                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black uppercase cursor-pointer"
+              >
+                {customRoles.map(r => (
+                  <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} ({r.category.toUpperCase()})</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Preset Wristband Colors</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {COLOR_PRESETS.map(preset => (
+                  <button
+                    key={preset.name}
+                    onClick={() => { setCustomColorName(preset.name); setCustomColorHex(preset.hex); }}
+                    className="p-2 bg-white rounded-xl border border-slate-200 hover:border-slate-400 flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer"
+                  >
+                    <span className="w-5 h-5 rounded-full border shadow-xs" style={{ backgroundColor: preset.hex }} />
+                    <span className="text-[9px] font-bold text-slate-700 leading-tight">{preset.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <Input
+                label="Wristband Color Name"
+                value={customColorName}
+                onChange={(e) => setCustomColorName(e.target.value)}
+              />
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={customColorHex}
+                    onChange={(e) => setCustomColorHex(e.target.value)}
+                    className="w-10 h-10 rounded-xl cursor-pointer border p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={customColorHex}
+                    onChange={(e) => setCustomColorHex(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl font-mono text-xs font-bold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleSaveWristbandColor}
+              className="w-full py-2.5 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center justify-center gap-2"
+            >
+              {savedColorNotice ? <Check className="w-3.5 h-3.5" /> : <Palette className="w-3.5 h-3.5" />}
+              {savedColorNotice ? 'Color Saved to Role!' : 'Save Wristband Color for Role'}
+            </button>
+          </div>
+
+          {/* Live Physical Wristband Strip Rendering */}
+          <div className="space-y-3">
+            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">Physical Wristband Band Preview</span>
+
+            <div
+              className="p-6 rounded-2xl text-white shadow-lg space-y-4 relative overflow-hidden transition-all flex flex-col justify-between h-48"
+              style={{ backgroundColor: customColorHex }}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <img src="/logo.jpeg" alt="NLF Logo" className="w-8 h-8 rounded-lg border border-white/30" />
+                  <div>
+                    <span className="font-black text-xs uppercase tracking-tight block">NLF 2026 CARNIVAL</span>
+                    <span className="text-[8px] font-black uppercase opacity-80 block tracking-widest">OFFICIAL GATE WRISTBAND</span>
+                  </div>
+                </div>
+
+                <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/30">
+                  {selectedRoleForColor.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="border-t border-white/20 pt-3 flex items-end justify-between">
+                <div>
+                  <span className="text-[9px] font-black uppercase opacity-75 block">Band Color Designation</span>
+                  <p className="text-base font-black uppercase tracking-wide">{customColorName}</p>
+                </div>
+                <div className="font-mono text-xs font-black tracking-widest bg-black/30 px-3 py-1 rounded-lg">
+                  GCC-2026-BAND
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -704,15 +970,15 @@ export default function AdminCommandConsole({ onNavigate }) {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
               <h3 className="text-sm font-black uppercase text-slate-900">Personnel & Role Assignments</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Promote users to Staff/Admin/Team or downgrade Staff to Attendee/User</p>
+              <p className="text-[10px] text-slate-500 font-medium">Assign dynamic custom roles under Staff/Operations or Attendee/Guests</p>
             </div>
 
             <div className="flex items-center gap-2">
               {[
-                { id: 'ALL', label: 'All Accounts' },
-                { id: 'STAFF', label: 'Staff & Team' },
-                { id: 'ATTENDEE', label: 'Attendees' },
-                { id: 'USER', label: 'Unassigned Users' }
+                { id: 'STAFF', label: 'Staff & Operations' },
+                { id: 'ATTENDEE', label: 'Attendees & Guests' },
+                { id: 'USER', label: 'Unassigned Users' },
+                { id: 'ALL', label: 'All Accounts' }
               ].map(f => (
                 <button
                   key={f.id}
@@ -730,7 +996,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                 <th className="p-4">Personnel</th>
                 <th className="p-4">Status & Telemetry</th>
-                <th className="p-4">Assigned Role</th>
+                <th className="p-4">Assigned Role/Group</th>
                 <th className="p-4">Assigned Gate</th>
               </tr>
             </thead>
@@ -759,16 +1025,23 @@ export default function AdminCommandConsole({ onNavigate }) {
                       </td>
                       <td className="p-4">
                         <select
-                          value={p.role || 'user'}
+                          value={(p.role || 'user').toLowerCase()}
                           onChange={(e) => handleAssignRoleAndGate(p.id, e.target.value, p.assigned_gate_id)}
-                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer shadow-xs"
+                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold uppercase cursor-pointer shadow-xs max-w-xs"
                         >
-                          <option value="user">USER (Unassigned)</option>
-                          <option value="attendee">ATTENDEE (Pass Holder)</option>
-                          <option value="team_member">TEAM MEMBER (Official)</option>
-                          <option value="gatekeeper">GATEKEEPER (Staff)</option>
-                          <option value="security">SECURITY (Steward)</option>
-                          <option value="admin">ADMIN (Executive)</option>
+                          <optgroup label="STAFF & OPERATIONS GROUPS">
+                            {customRoles.filter(r => r.category === 'staff').map(r => (
+                              <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} (STAFF)</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="ATTENDEE & GUEST GROUPS">
+                            {customRoles.filter(r => r.category === 'attendee').map(r => (
+                              <option key={r.id} value={r.name.toLowerCase()}>{r.name.toUpperCase()} (PASS)</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="UNASSIGNED">
+                            <option value="user">USER (Unassigned)</option>
+                          </optgroup>
                         </select>
                       </td>
                       <td className="p-4">
@@ -834,6 +1107,59 @@ export default function AdminCommandConsole({ onNavigate }) {
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Add Custom Role / Group Modal */}
+      {showRoleModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4">
+            <h3 className="text-sm font-black uppercase text-slate-900">Add New Role / Group</h3>
+            <form onSubmit={handleCreateCustomRole} className="space-y-4">
+              <Input
+                label="Role / Group Name"
+                placeholder="e.g. Director, Tech Support, Creatives, Vendors, Exhibitors"
+                required
+                value={newRoleName}
+                onChange={e => setNewRoleName(e.target.value)}
+              />
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Role Category</label>
+                <select
+                  value={newRoleCategory}
+                  onChange={(e) => setNewRoleCategory(e.target.value)}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase cursor-pointer"
+                >
+                  <option value="staff">Staff & Operations (Director, Tech Support, Creatives, Security)</option>
+                  <option value="attendee">Attendees & Guests (Vendors, Exhibitors, Sponsors, Press)</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="Wristband Color Name"
+                  placeholder="e.g. Cobalt Blue"
+                  value={newRoleColorName}
+                  onChange={e => setNewRoleColorName(e.target.value)}
+                />
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Color Code (Hex)</label>
+                  <input
+                    type="color"
+                    value={newRoleColorHex}
+                    onChange={e => setNewRoleColorHex(e.target.value)}
+                    className="w-full h-10 rounded-xl cursor-pointer border p-0.5"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowRoleModal(false)}>Cancel</Button>
+                <Button type="submit" className="flex-1">Create Role / Group</Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

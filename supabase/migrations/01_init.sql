@@ -35,22 +35,51 @@ VALUES
   ('44444444-4444-4444-4444-444444444444', 'Gate 4 - Livestock Exhibition Ring', 'Exhibition ring and staff entrance')
 ON CONFLICT (id) DO NOTHING;
 
--- 3. Profiles Table
+-- 3. Custom Roles / Groups Table
+CREATE TABLE IF NOT EXISTS public.custom_roles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL CHECK (category IN ('staff', 'attendee')),
+  wristband_color TEXT DEFAULT 'Emerald Green',
+  wristband_hex TEXT DEFAULT '#0F4A2F',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Seed default custom_roles
+INSERT INTO public.custom_roles (name, category, wristband_color, wristband_hex)
+VALUES
+  ('Admin', 'staff', 'Obsidian Platinum', '#0F172A'),
+  ('Director', 'staff', 'Champagne Gold', '#D97706'),
+  ('Tech Support', 'staff', 'Cobalt Blue', '#2563EB'),
+  ('Gatekeeper', 'staff', 'Emerald Green', '#0F4A2F'),
+  ('Security', 'staff', 'Crimson Red', '#DC2626'),
+  ('Creatives', 'staff', 'Royal Purple', '#7E22CE'),
+  ('Team Member', 'staff', 'Cobalt Blue', '#2563EB'),
+  ('Attendee', 'attendee', 'Emerald Green', '#0F4A2F'),
+  ('Vendors', 'attendee', 'Tangerine Orange', '#EA580C'),
+  ('Exhibitors', 'attendee', 'Royal Purple', '#7E22CE'),
+  ('VIP Tier 1', 'attendee', 'Metallic Silver', '#64748B'),
+  ('VIP Tier 2', 'attendee', 'Champagne Gold', '#D97706'),
+  ('VIP Tier 3', 'attendee', 'Obsidian Platinum', '#0F172A')
+ON CONFLICT (name) DO NOTHING;
+
+-- 4. Profiles Table (Supports custom role names as TEXT)
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   full_name TEXT,
-  role public.user_roles NOT NULL DEFAULT 'user'::public.user_roles,
+  role TEXT NOT NULL DEFAULT 'user',
   assigned_gate_id UUID REFERENCES public.gates(id) ON DELETE SET NULL,
   last_seen_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Add column if profiles existed before
+-- Convert column type if created previously as ENUM
+ALTER TABLE public.profiles ALTER COLUMN role TYPE TEXT USING role::text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW();
 
--- 4. Tickets Table (Enterprise Box-Office Schema)
+-- 5. Tickets Table (Enterprise Box-Office Schema)
 CREATE TABLE public.tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_code TEXT NOT NULL UNIQUE,
@@ -78,13 +107,18 @@ CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles (role);
 ALTER TABLE public.gates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_roles ENABLE ROW LEVEL SECURITY;
+
+-- Custom Roles RLS Policies
+DROP POLICY IF EXISTS "Allow ALL custom_roles" ON public.custom_roles;
+CREATE POLICY "Allow ALL custom_roles"
+  ON public.custom_roles FOR ALL
+  TO authenticated, anon
+  USING (true)
+  WITH CHECK (true);
 
 -- Gates RLS Policies
 DROP POLICY IF EXISTS "Allow ALL gates" ON public.gates;
-DROP POLICY IF EXISTS "Allow SELECT gates for all authenticated users" ON public.gates;
-DROP POLICY IF EXISTS "Allow anon SELECT gates" ON public.gates;
-DROP POLICY IF EXISTS "Allow ALL gates for admins" ON public.gates;
-
 CREATE POLICY "Allow ALL gates"
   ON public.gates FOR ALL
   TO authenticated, anon
@@ -93,10 +127,6 @@ CREATE POLICY "Allow ALL gates"
 
 -- Profiles RLS Policies
 DROP POLICY IF EXISTS "Allow ALL profiles" ON public.profiles;
-DROP POLICY IF EXISTS "Allow SELECT own profile or admins" ON public.profiles;
-DROP POLICY IF EXISTS "Allow UPDATE own profile or admins" ON public.profiles;
-DROP POLICY IF EXISTS "Allow INSERT profiles" ON public.profiles;
-
 CREATE POLICY "Allow ALL profiles"
   ON public.profiles FOR ALL
   TO authenticated, anon
@@ -107,10 +137,6 @@ CREATE POLICY "Allow ALL profiles"
 DROP POLICY IF EXISTS "Allow SELECT tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow INSERT tickets" ON public.tickets;
 DROP POLICY IF EXISTS "Allow UPDATE tickets" ON public.tickets;
-DROP POLICY IF EXISTS "Allow SELECT tickets for owners, gatekeepers, security, admins" ON public.tickets;
-DROP POLICY IF EXISTS "Allow anon SELECT tickets by ticket_code" ON public.tickets;
-DROP POLICY IF EXISTS "Allow INSERT tickets for admins, gatekeepers, or self" ON public.tickets;
-DROP POLICY IF EXISTS "Allow UPDATE tickets for admins" ON public.tickets;
 
 CREATE POLICY "Allow SELECT tickets"
   ON public.tickets FOR SELECT
@@ -128,7 +154,7 @@ CREATE POLICY "Allow UPDATE tickets"
   USING (true)
   WITH CHECK (true);
 
--- 5. Trigger on auth.users -> public.profiles
+-- 6. Trigger on auth.users -> public.profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -141,9 +167,9 @@ BEGIN
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', 'User'),
     CASE
-      WHEN LOWER(NEW.email) IN ('admin@livestockcarnival.ng', 'admin@gcc.com') THEN 'admin'::public.user_roles
-      WHEN LOWER(NEW.email) LIKE 'qrscanner%' THEN 'gatekeeper'::public.user_roles
-      ELSE 'user'::public.user_roles
+      WHEN LOWER(NEW.email) IN ('admin@livestockcarnival.ng', 'admin@gcc.com') THEN 'admin'
+      WHEN LOWER(NEW.email) LIKE 'qrscanner%' THEN 'gatekeeper'
+      ELSE 'user'
     END
   )
   ON CONFLICT (id) DO UPDATE
@@ -158,7 +184,7 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 6. Atomic Checkin PL/pgSQL RPC Stored Procedure
+-- 7. Atomic Checkin PL/pgSQL RPC Stored Procedure
 CREATE OR REPLACE FUNCTION public.atomic_checkin(
   p_ticket_code TEXT,
   p_gate_id UUID
@@ -238,7 +264,7 @@ BEGIN
 END;
 $$;
 
--- 7. Sync Scan Event RPC
+-- 8. Sync Scan Event RPC
 CREATE OR REPLACE FUNCTION public.sync_scan_event(
   p_operation_id TEXT,
   p_ticket_id TEXT,
