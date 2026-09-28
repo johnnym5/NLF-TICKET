@@ -63,10 +63,13 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
       if (onSuccess) onSuccess(user);
       handleClose();
     } catch (err) {
-      if (err.code === 'auth/email-already-in-use') {
-        setError('Email already registered. Please sign in.');
+      const msg = err.message || '';
+      if (msg.includes('rate limit') || msg.includes('seconds') || msg.includes('exceeded')) {
+        setError('Email rate limit reached. Please wait a minute, or use "Continue with Google".');
+      } else if (err.code === 'auth/email-already-in-use' || msg.includes('already registered')) {
+        setError('Email already registered. Switch to "Sign in" below.');
       } else {
-        setError('Invalid credentials. Please try again.');
+        setError(msg || 'Invalid credentials. Please try again.');
       }
     } finally {
       setLoading(false);
