@@ -175,7 +175,7 @@ export function AuthProvider({ children }) {
         }
 
         // 2. Fetch User Ticket
-        const { data: ticket } = await supabase
+        let { data: ticket } = await supabase
           .from('tickets')
           .select('*')
           .eq('owner_id', user.id)
@@ -188,6 +188,13 @@ export function AuthProvider({ children }) {
           if (profile && profile.role === 'user') {
             await supabase.from('profiles').update({ role: 'attendee' }).eq('id', user.id);
             profile.role = 'attendee';
+          }
+        } else {
+          // Auto-provision ticket in Supabase database if none exists yet
+          try {
+            ticket = await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
+          } catch (e) {
+            console.warn('Auto-provisioning ticket warning:', e);
           }
         }
 

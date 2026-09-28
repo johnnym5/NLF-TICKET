@@ -175,6 +175,19 @@ BEGIN
   ON CONFLICT (id) DO UPDATE
   SET email = EXCLUDED.email,
       full_name = EXCLUDED.full_name;
+  -- Auto-generate default ticket if attendee/user and no ticket exists
+  IF NOT EXISTS (SELECT 1 FROM public.tickets WHERE owner_id = NEW.id AND parent_ticket_id IS NULL) THEN
+    INSERT INTO public.tickets (ticket_code, owner_id, tier, status, is_manual, created_by)
+    VALUES (
+      'GCC-2026-' || UPPER(SUBSTRING(MD5(RANDOM()::TEXT) FROM 1 FOR 6)),
+      NEW.id,
+      'general',
+      'valid',
+      FALSE,
+      NEW.id
+    );
+  END IF;
+
   RETURN NEW;
 END;
 $$;
