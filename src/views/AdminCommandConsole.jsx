@@ -129,7 +129,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [addUserModalTab, setAddUserModalTab] = useState('DETAILS'); // 'DETAILS' (manual entry) or 'TYPE' (new role/group)
 
-  // Manual User Entry Form State
+  // Manual User Entry Form State (Email optional)
   const [manualUserFullName, setManualUserFullName] = useState('');
   const [manualUserEmail, setManualUserEmail] = useState('');
   const [manualUserRole, setManualUserRole] = useState('attendee');
@@ -244,11 +244,10 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   const handleCreateManualUser = async (e) => {
     e.preventDefault();
-    if (!manualUserEmail.trim()) return;
 
     try {
-      const email = manualUserEmail.trim().toLowerCase();
-      const fullName = manualUserFullName.trim() || email.split('@')[0];
+      const email = manualUserEmail.trim() ? manualUserEmail.trim().toLowerCase() : `manual-${Date.now()}-${Math.random().toString(36).substring(2,6)}@livestockcarnival.ng`;
+      const fullName = manualUserFullName.trim() || 'Manual Attendee';
       const role = manualUserRole.toLowerCase();
 
       const { data: existingProfile } = await supabase
@@ -1112,12 +1111,19 @@ export default function AdminCommandConsole({ onNavigate }) {
                   const online = isUserOnline(p.last_seen_at);
                   const isStaff = isStaffRole(p.role);
                   const wristband = getRoleWristbandObj(p.role);
+                  const isManualUser = p.email && p.email.startsWith('manual-');
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="p-4">
                         <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
-                        <div className="text-[10px] text-slate-400">{p.email}</div>
+                        {isManualUser ? (
+                          <span className="inline-block bg-amber-50 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider mt-0.5">
+                            MANUAL ENTRY
+                          </span>
+                        ) : (
+                          <div className="text-[10px] text-slate-400">{p.email}</div>
+                        )}
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">
@@ -1264,7 +1270,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               </div>
             </div>
 
-            {/* TAB A: MANUAL NEW USER ENTRY */}
+            {/* TAB A: MANUAL NEW USER ENTRY (Email is optional) */}
             {addUserModalTab === 'DETAILS' && (
               <form onSubmit={handleCreateManualUser} className="space-y-4">
                 <Input
@@ -1274,10 +1280,9 @@ export default function AdminCommandConsole({ onNavigate }) {
                   onChange={e => setManualUserFullName(e.target.value)}
                 />
                 <Input
-                  label="Email Address"
+                  label="Email Address (Optional for Manual Entry)"
                   type="email"
-                  placeholder="e.g. john@livestockcarnival.ng"
-                  required
+                  placeholder="e.g. john@livestockcarnival.ng (Optional)"
                   value={manualUserEmail}
                   onChange={e => setManualUserEmail(e.target.value)}
                 />
@@ -1305,7 +1310,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                 {/* Gate Selection if Staff Role Chosen */}
                 {isStaffRole(manualUserRole) && (
                   <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Assign Gate Checkpoint</label>
+                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Assign Gate Checkpoint (Optional)</label>
                     <select
                       value={manualUserGate}
                       onChange={(e) => setManualUserGate(e.target.value)}
