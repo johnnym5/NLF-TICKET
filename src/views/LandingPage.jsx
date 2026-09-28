@@ -22,10 +22,27 @@ import ExperienceDetailModal from '../components/ExperienceDetailModal';
 import FestivalInfoModal from '../components/FestivalInfoModal';
 import EventScheduleModal from '../components/EventScheduleModal';
 
-export function getRoundTicketCount(count) {
-  const num = Number(count) || 0;
-  if (num === 0) return "10+";
-  return `${num}`;
+export function formatTicketBannerText(totalTickets, hasTicket) {
+  const count = Math.max(0, Number(totalTickets) || 0);
+
+  if (hasTicket) {
+    const others = Math.max(0, count - 1);
+    if (others === 0) {
+      return "YOU ALREADY HAVE YOUR OFFICIAL FESTIVAL PASS";
+    }
+    if (others === 1) {
+      return "YOU AND 1 OTHER HAVE ALREADY GOTTEN THEIR TICKET";
+    }
+    return `YOU AND ${others.toLocaleString()} OTHERS HAVE ALREADY GOTTEN THEIR TICKETS`;
+  } else {
+    if (count === 0) {
+      return "BE THE FIRST TO CLAIM YOUR FREE FESTIVAL PASS";
+    }
+    if (count === 1) {
+      return "1 PERSON HAS ALREADY GOTTEN THEIR TICKET";
+    }
+    return `JOIN ${count.toLocaleString()} PEOPLE WHO HAVE ALREADY GOTTEN THEIR TICKET`;
+  }
 }
 
 export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
@@ -148,9 +165,7 @@ export default function LandingPage({ onClaimPass, vipTier = 'REGULAR' }) {
                 <Ticket className="w-4 h-4" />
               </div>
               <p className="text-xs sm:text-sm font-extrabold uppercase tracking-wide text-emerald-100 text-center sm:text-left leading-snug">
-                {hasTicket
-                  ? `YOU AND OVER ${getRoundTicketCount(totalTickets)} OTHERS HAVE ALREADY GOTTEN THEIR TICKET`
-                  : `WITH OVER ${getRoundTicketCount(totalTickets)} PEOPLE ALREADY GOTTEN THEIR TICKET`}
+                {formatTicketBannerText(totalTickets, hasTicket)}
               </p>
             </div>
           </ScrollReveal>

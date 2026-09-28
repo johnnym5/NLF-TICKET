@@ -1,17 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { getRoundTicketCount } from './LandingPage';
+import { formatTicketBannerText } from './LandingPage';
 
-describe('getRoundTicketCount', () => {
-  it('returns fallback "10+" when count is 0 or invalid', () => {
-    expect(getRoundTicketCount(0)).toBe('10+');
-    expect(getRoundTicketCount(null)).toBe('10+');
-    expect(getRoundTicketCount(undefined)).toBe('10+');
+describe('formatTicketBannerText', () => {
+  it('formats banner for unauthenticated user with 0 tickets', () => {
+    expect(formatTicketBannerText(0, false)).toBe('BE THE FIRST TO CLAIM YOUR FREE FESTIVAL PASS');
   });
 
-  it('returns exact dynamic ticket count as a string when tickets exist', () => {
-    expect(getRoundTicketCount(1)).toBe('1');
-    expect(getRoundTicketCount(12)).toBe('12');
-    expect(getRoundTicketCount(105)).toBe('105');
-    expect(getRoundTicketCount(520)).toBe('520');
+  it('formats banner for unauthenticated user with tickets', () => {
+    expect(formatTicketBannerText(1, false)).toBe('1 PERSON HAS ALREADY GOTTEN THEIR TICKET');
+    expect(formatTicketBannerText(15, false)).toBe('JOIN 15 PEOPLE WHO HAVE ALREADY GOTTEN THEIR TICKET');
+  });
+
+  it('formats banner for logged in ticket holder', () => {
+    expect(formatTicketBannerText(1, true)).toBe('YOU ALREADY HAVE YOUR OFFICIAL FESTIVAL PASS');
+    expect(formatTicketBannerText(2, true)).toBe('YOU AND 1 OTHER HAVE ALREADY GOTTEN THEIR TICKET');
+    expect(formatTicketBannerText(15, true)).toBe('YOU AND 14 OTHERS HAVE ALREADY GOTTEN THEIR TICKETS');
   });
 });
