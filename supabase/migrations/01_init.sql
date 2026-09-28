@@ -12,6 +12,9 @@ BEGIN
   END IF;
 END $$;
 
+-- Drop legacy tickets table if it exists with old schema
+DROP TABLE IF EXISTS public.tickets CASCADE;
+
 -- 2. Gates Table
 CREATE TABLE IF NOT EXISTS public.gates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -41,8 +44,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 4. Tickets Table
-CREATE TABLE IF NOT EXISTS public.tickets (
+-- 4. Tickets Table (Enterprise Box-Office Schema)
+CREATE TABLE public.tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_code TEXT NOT NULL UNIQUE,
   owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
