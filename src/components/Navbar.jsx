@@ -12,7 +12,6 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
   const isGatekeeper = userRole === 'gatekeeper' || userRole === 'security' || isAdmin;
 
   const navItems = [
-    { id: 'landing', label: 'Festival Info', icon: Info, public: true },
     { id: 'pass', label: 'My Gate Pass', icon: QrCode, auth: true },
     { id: 'gatekeeper', label: 'Gate Terminal', icon: ShieldCheck, role: isGatekeeper, badge: 'Staff' },
     { id: 'admin', label: 'Command Hub', icon: BarChart3, role: isAdmin, badge: 'Executive' },
