@@ -42,37 +42,42 @@ CREATE INDEX IF NOT EXISTS idx_tickets_status ON public.tickets (status);
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vip_invitations ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for tickets
+-- RLS Policies for tickets (Drop if exists for idempotency)
+DROP POLICY IF EXISTS "Allow authenticated SELECT on tickets" ON public.tickets;
 CREATE POLICY "Allow authenticated SELECT on tickets"
   ON public.tickets
   FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Allow anon SELECT on tickets" ON public.tickets;
 CREATE POLICY "Allow anon SELECT on tickets"
   ON public.tickets
   FOR SELECT
   TO anon
   USING (true);
 
+DROP POLICY IF EXISTS "Allow INSERT for registration" ON public.tickets;
 CREATE POLICY "Allow INSERT for registration"
   ON public.tickets
   FOR INSERT
   WITH CHECK (true);
 
--- Direct UPDATE policy blocked for regular operations (updates routed via SECURITY DEFINER procedures)
+DROP POLICY IF EXISTS "Block direct UPDATE on tickets" ON public.tickets;
 CREATE POLICY "Block direct UPDATE on tickets"
   ON public.tickets
   FOR UPDATE
   USING (false);
 
 -- RLS Policies for vip_invitations
+DROP POLICY IF EXISTS "Allow ALL on vip_invitations for authenticated" ON public.vip_invitations;
 CREATE POLICY "Allow ALL on vip_invitations for authenticated"
   ON public.vip_invitations
   FOR ALL
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Allow SELECT on vip_invitations for anon" ON public.vip_invitations;
 CREATE POLICY "Allow SELECT on vip_invitations for anon"
   ON public.vip_invitations
   FOR SELECT
