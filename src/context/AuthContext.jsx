@@ -20,23 +20,23 @@ export const TIER_WRISTBANDS = {
 
 export const TIER_LABELS = {
   general: 'General Admission Pass',
-  vip_1: 'VIP Tier 1 (+10 Guests)',
-  vip_2: 'VIP Tier 2 (+15 Guests)',
-  vip_3: 'VIP Tier 3 (+20 Guests)',
+  vip_1: 'VIP Tier 1 (10 Total Passes)',
+  vip_2: 'VIP Tier 2 (15 Total Passes)',
+  vip_3: 'VIP Tier 3 (20 Total Passes)',
   // Backward compatibility keys
   REGULAR: 'General Entry',
-  VIP_SILVER: 'Silver Delegate VIP',
-  VIP_GOLD: 'Gold Dignitary VIP',
-  VIP_PLATINUM: 'Platinum Executive VIP',
+  VIP_SILVER: 'Silver Delegate VIP (10 Passes)',
+  VIP_GOLD: 'Gold Dignitary VIP (15 Passes)',
+  VIP_PLATINUM: 'Platinum Executive VIP (20 Passes)',
   TEAM_MEMBER: 'Official Team Member',
   VENDOR: 'Certified Carnival Vendor',
   ASSOCIATE: 'Partner Associate'
 };
 
 export const VIP_PLUS_ONES = {
-  vip_1: 10,
-  vip_2: 15,
-  vip_3: 20,
+  vip_1: 9,  // 1 Primary + 9 Guests = 10 Total Passes
+  vip_2: 14, // 1 Primary + 14 Guests = 15 Total Passes
+  vip_3: 19, // 1 Primary + 19 Guests = 20 Total Passes
   general: 0
 };
 
@@ -190,13 +190,20 @@ export function AuthProvider({ children }) {
 
         if (ticket) {
           setUserTicket(ticket);
-          // Auto-sync role to attendee if ticket exists and current role is 'user'
-          if (profile && profile.role === 'user') {
-            await supabase.from('profiles').update({ role: 'attendee' }).eq('id', user.id);
-            profile.role = 'attendee';
-            setUserRole('attendee');
+        }
+
+        // Always check if an active VIP invite or pending invite exists
+        const pendingInvite = typeof window !== 'undefined'
+          ? (new URLSearchParams(window.location.search).get('invite') || sessionStorage.getItem('gcc_pending_invite_id'))
+          : null;
+
+        if (pendingInvite) {
+          try {
+            await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general', pendingInvite);
+          } catch (e) {
+            console.warn('VIP invite processing warning:', e);
           }
-        } else {
+        } else if (!ticket) {
           // Auto-provision ticket ONLY if user is a regular attendee/user, NOT staff or admin
           const roleLower = (profile?.role || 'user').toLowerCase();
           const isStaffOrAdmin = ['admin', 'executive_admin', 'gatekeeper', 'security', 'team_member', 'director', 'tech support', 'creatives'].includes(roleLower);
@@ -206,19 +213,6 @@ export function AuthProvider({ children }) {
               await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general');
             } catch (e) {
               console.warn('Auto-provisioning ticket warning:', e);
-            }
-          }
-        }
-
-        // Check if there is an active VIP invitation parameter in URL
-        if (typeof window !== 'undefined') {
-          const urlParams = new URLSearchParams(window.location.search);
-          const inviteId = urlParams.get('invite');
-          if (inviteId) {
-            try {
-              await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general', inviteId);
-            } catch (e) {
-              console.warn('VIP invite processing warning:', e);
             }
           }
         }
@@ -283,11 +277,11 @@ export function AuthProvider({ children }) {
       const dbUser = user || currentUser;
       if (!dbUser) throw new Error('No active user session');
 
-      // Check if invitationId exists in URL parameters if not passed explicitly
+      // Check if invitationId exists in URL parameters or sessionStorage if not passed explicitly
       let targetInviteId = invitationId;
       if (!targetInviteId && typeof window !== 'undefined') {
         const urlParams = new URLSearchParams(window.location.search);
-        targetInviteId = urlParams.get('invite');
+        targetInviteId = urlParams.get('invite') || sessionStorage.getItem('gcc_pending_invite_id');
       }
 
       let activeTier = tier || 'general';
@@ -299,12 +293,16 @@ export function AuthProvider({ children }) {
           .eq('id', targetInviteId)
           .maybeSingle();
 
-        if (invite && (!invite.isUsed || invite.usedBy === dbUser.id)) {
+        if (invite) {
           activeTier = invite.tier || 'vip_2';
           await supabase
             .from('vip_invitations')
             .update({ isUsed: true, usedBy: dbUser.id })
             .eq('id', targetInviteId);
+
+          if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('gcc_pending_invite_id');
+          }
         }
       }
 
@@ -355,7 +353,7 @@ export function AuthProvider({ children }) {
                 owner_id: dbUser.id,
                 tier: normalizedTier,
                 parent_ticket_id: currentTicket.id,
-                guest_name: `Guest #${i}`,
+                guest_name: null, // Blank placeholder until VIP assigns guest name
                 is_manual: false,
                 created_by: dbUser.id,
                 status: 'valid'
@@ -405,7 +403,7 @@ export function AuthProvider({ children }) {
             owner_id: dbUser.id,
             tier: normalizedTier,
             parent_ticket_id: insertedTicket.id,
-            guest_name: `Guest #${i}`,
+            guest_name: null, // Blank placeholder until VIP assigns guest name
             is_manual: false,
             created_by: dbUser.id,
             status: 'valid'

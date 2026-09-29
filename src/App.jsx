@@ -49,7 +49,12 @@ function AppContent() {
 
       const params = new URLSearchParams(window.location.search);
       const invite = params.get('invite');
-      if (invite) setInvitationId(invite);
+      if (invite) {
+        setInvitationId(invite);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('gcc_pending_invite_id', invite);
+        }
+      }
 
       const vipParam = (params.get('vip') || '').toLowerCase();
       if (vipParam === 'silver') setVipTierHint('VIP_SILVER');
@@ -178,7 +183,7 @@ function AppContent() {
         invitationId={invitationId}
         onSuccess={(user) => {
           const email = user?.email || '';
-          if (userRole === 'admin' || userRole === 'executive_admin' || email === 'admin@livestockcarnival.ng' || email === 'admin@gcc.com') {
+          if (userRole === 'admin' || userRole === 'executive_admin' || email === 'admin@livestockcarnival.ng' || email === 'email@gcc.com') {
             navigateTo('admin');
           } else if (userRole === 'gatekeeper' || email.startsWith('qrscanner')) {
             navigateTo('gatekeeper');

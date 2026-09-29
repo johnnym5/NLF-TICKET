@@ -66,7 +66,7 @@ export default function ComplianceView() {
       <ScrollReveal delay={400}>
         <div className="text-center p-8 bg-slate-50 rounded-2xl border-2 border-slate-200/60">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">Compliance Hub</p>
-          <p className="text-slate-600 font-black">compliance@nlf.gov.ng</p>
+          <p className="text-slate-600 font-black">support@livestockcarnival.ng</p>
         </div>
       </ScrollReveal>
     </div>

@@ -34,10 +34,19 @@ import {
   Crown,
   UserCheck,
   Plus,
-  Check
+  Check,
+  User
 } from 'lucide-react';
 
 import { executeAtomicCheckIn } from '../utils/atomic-checkin';
+
+function resolveEffectiveTier(ticketTier, profileRole) {
+  const roleLower = (profileRole || '').toLowerCase();
+  if (roleLower.includes('vip tier 1') || roleLower === 'vip_1') return 'vip_1';
+  if (roleLower.includes('vip tier 2') || roleLower === 'vip_2') return 'vip_2';
+  if (roleLower.includes('vip tier 3') || roleLower === 'vip_3') return 'vip_3';
+  return ticketTier || 'general';
+}
 
 export default function GatekeeperScanner() {
   const { currentUser, userProfile, userRole, assignedGate } = useAuth();
@@ -149,7 +158,7 @@ export default function GatekeeperScanner() {
     };
   }, [currentUser, scanPage]);
 
-  const fetchVipManifest = async (ticket) => {
+  const fetchVipManifest = async (ticket, ownerProfile) => {
     try {
       const parentId = ticket.parent_ticket_id || ticket.id;
 
@@ -168,9 +177,10 @@ export default function GatekeeperScanner() {
         .order('created_at', { ascending: true });
 
       if (primaryTicket) {
+        const hostName = ownerProfile?.full_name || primaryTicket.profiles?.full_name || primaryTicket.profiles?.email || 'VIP Delegate';
         setVipManifestData({
           primaryTicket,
-          hostName: primaryTicket.profiles?.full_name || primaryTicket.profiles?.email || 'VIP Delegate',
+          hostName,
           guestTickets: guestTickets || []
         });
       }
@@ -251,6 +261,27 @@ export default function GatekeeperScanner() {
     try {
       const result = await executeAtomicCheckIn(cleanCode, selectedGateId);
 
+      // Fetch attendee's full name from profiles
+      let attendeeName = 'Attendee';
+      let ownerProfile = null;
+
+      if (result?.data?.owner_id) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', result.data.owner_id)
+          .maybeSingle();
+
+        if (prof) {
+          ownerProfile = prof;
+          attendeeName = prof.full_name || prof.email || 'Attendee';
+        }
+      } else if (result?.data?.guest_name) {
+        attendeeName = result.data.guest_name;
+      }
+
+      const effectiveTier = resolveEffectiveTier(result?.data?.tier, ownerProfile?.role);
+
       if (result?.success || result?.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
@@ -259,11 +290,15 @@ export default function GatekeeperScanner() {
         soundFX.triggerDuplicateHaptic();
       }
 
-      setScannedResult(result);
+      setScannedResult({
+        ...result,
+        attendeeName,
+        effectiveTier
+      });
 
       // If scanned ticket is a VIP pass, trigger VIP Manifest popup
-      if (result?.data && (result.data.tier || '').toLowerCase().startsWith('vip')) {
-        await fetchVipManifest(result.data);
+      if (effectiveTier.startsWith('vip')) {
+        await fetchVipManifest(result.data, ownerProfile);
       }
     } catch (err) {
       console.error('Scanner error:', err);
@@ -305,6 +340,8 @@ export default function GatekeeperScanner() {
 
       setScannedResult({
         ...checkinRes,
+        attendeeName: manualName.trim(),
+        effectiveTier: manualTier,
         message: `MANUAL TICKET CREATED: ${checkinRes.message || 'Checked in successfully.'}`
       });
 
@@ -462,30 +499,50 @@ export default function GatekeeperScanner() {
         </Button>
       </div>
 
-      {/* Result Display */}
+      {/* RESULT DISPLAY (Name First, Ticket ID Code Below) */}
       {scannedResult && (
         <div className="animate-fadeIn">
-          <div className={`p-6 rounded-xl border-2 ${
-            scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' :
-            'bg-rose-50 border-rose-400 text-rose-900 animate-shake'
+          <div className={`p-6 rounded-2xl border-2 shadow-lg ${
+            scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-50 border-emerald-400 text-emerald-950' :
+            'bg-rose-50 border-rose-400 text-rose-950 animate-shake'
           }`}>
             <div className="flex items-start gap-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
-                scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-100' : 'bg-rose-100'
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-200/80 text-emerald-900' : 'bg-rose-200/80 text-rose-900'
               }`}>
-                {scannedResult.success || scannedResult.status === 'VALID' ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                {scannedResult.success || scannedResult.status === 'VALID' ? <CheckCircle2 className="w-7 h-7" /> : <AlertTriangle className="w-7 h-7" />}
               </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-black tracking-tight leading-tight mb-2 uppercase">{scannedResult.message}</h3>
+
+              <div className="flex-1 space-y-2">
+                {/* 1. ATTENDEE FULL NAME FIRST */}
+                <div>
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Attendee Full Name</span>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">
+                    {scannedResult.attendeeName || 'Attendee'}
+                  </h2>
+                </div>
+
+                {/* 2. TICKET CODE / ID NUMBER BELOW */}
                 {scannedResult.data && (
-                  <div className="space-y-1">
-                    <p className="text-xs font-black uppercase tracking-widest">Tier: {scannedResult.data.tier}</p>
-                    {(scannedResult.success || scannedResult.status === 'VALID') && (
-                      <div className="mt-4 p-3 bg-white/50 border border-emerald-200 rounded-lg text-center">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-1">Wristband Allocation</p>
-                        <p className="text-sm font-black uppercase">{TIER_WRISTBANDS[scannedResult.data.tier] || 'EMERALD GREEN'}</p>
-                      </div>
-                    )}
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[10px] font-black uppercase text-slate-400">ID / Ticket Code:</span>
+                    <span className="bg-white/80 border border-slate-200 font-mono text-xs font-black px-2.5 py-1 rounded-lg text-slate-900 shadow-xs">
+                      {scannedResult.data.ticket_code}
+                    </span>
+                  </div>
+                )}
+
+                {/* 3. ADMITTANCE MESSAGE & WRISTBAND */}
+                <p className="text-xs font-black uppercase tracking-wide text-slate-700 pt-1">
+                  {scannedResult.message}
+                </p>
+
+                {scannedResult.data && (scannedResult.success || scannedResult.status === 'VALID') && (
+                  <div className="mt-3 p-3 bg-white rounded-xl border border-emerald-200 text-center shadow-xs">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-700 block mb-0.5">Physical Wristband Designation</span>
+                    <p className="text-sm font-black uppercase text-slate-900">
+                      {TIER_WRISTBANDS[scannedResult.effectiveTier || scannedResult.data.tier] || 'EMERALD GREEN'}
+                    </p>
                   </div>
                 )}
               </div>
@@ -494,91 +551,94 @@ export default function GatekeeperScanner() {
         </div>
       )}
 
-      {/* VIP GUEST MANIFEST GATE ADMITTANCE PANEL */}
+      {/* VIP GUEST MANIFEST GATE ADMITTANCE POPUP WINDOW */}
       {vipManifestData && (
-        <div className="bg-slate-900 rounded-3xl p-6 text-white space-y-4 border border-slate-800 shadow-2xl animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <Crown className="w-5 h-5 text-amber-400" />
-              <div>
-                <h3 className="text-sm font-black uppercase text-white">
-                  VIP Host: {vipManifestData.hostName}
-                </h3>
-                <span className="text-[10px] text-amber-400 font-extrabold uppercase">
-                  {TIER_LABELS[vipManifestData.primaryTicket.tier] || 'VIP Pass'}
-                </span>
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-3xl p-6 text-white space-y-4 border border-slate-800 shadow-2xl max-w-lg w-full animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Crown className="w-6 h-6 text-amber-400 shrink-0" />
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-400 block">VIP Delegate Manifest</span>
+                  <h3 className="text-base font-black uppercase text-white">
+                    Host: {vipManifestData.hostName}
+                  </h3>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">
+                    {TIER_LABELS[vipManifestData.primaryTicket.tier] || 'VIP Pass'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setVipManifestData(null)}
+                className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                Select / Mark Guest Entering Under VIP Host ({vipManifestData.guestTickets.length} Guests)
+              </span>
+
+              <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                {vipManifestData.guestTickets.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic p-3">No plus-one guests enrolled yet.</p>
+                ) : (
+                  vipManifestData.guestTickets.map((g, idx) => {
+                    const isAdmitted = g.status === 'used';
+                    return (
+                      <div key={g.id} className="p-3 bg-slate-800/90 rounded-2xl flex items-center justify-between gap-3 border border-slate-700/60">
+                        <div>
+                          <span className="font-extrabold text-sm text-white block">
+                            {g.guest_name || `VIP Guest #${idx + 1}`}
+                          </span>
+                          <span className="font-mono text-[9px] text-slate-400 block">
+                            Code: {g.ticket_code}
+                          </span>
+                        </div>
+
+                        {isAdmitted ? (
+                          <div className="flex items-center gap-1 bg-emerald-950 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border border-emerald-800 shrink-0">
+                            <Check className="w-3.5 h-3.5" />
+                            Admitted
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleAdmitVipGuest(g)}
+                            disabled={isAdmittingGuest}
+                            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase transition-all shadow-md cursor-pointer disabled:opacity-50 shrink-0"
+                          >
+                            Mark Admitted
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
 
-            <button
-              onClick={() => setVipManifestData(null)}
-              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
-            >
-              ✕
-            </button>
+            {/* On-the-spot Extra Guest Admittance */}
+            <form onSubmit={handleAddExtraVipGuestOnSpot} className="pt-3 border-t border-slate-800 flex gap-2">
+              <input
+                type="text"
+                placeholder="Type unlisted guest name..."
+                value={extraGuestName}
+                onChange={(e) => setExtraGuestName(e.target.value)}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isAdmittingGuest || !extraGuestName.trim()}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Admit
+              </button>
+            </form>
           </div>
-
-          <div className="space-y-2">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
-              Enrolled Plus-One Guests ({vipManifestData.guestTickets.length} Guests)
-            </span>
-
-            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-              {vipManifestData.guestTickets.length === 0 ? (
-                <p className="text-xs text-slate-500 italic p-3">No plus-one guests enrolled yet.</p>
-              ) : (
-                vipManifestData.guestTickets.map((g, idx) => {
-                  const isAdmitted = g.status === 'used';
-                  return (
-                    <div key={g.id} className="p-3 bg-slate-800/80 rounded-2xl flex items-center justify-between gap-3 border border-slate-700/50">
-                      <div>
-                        <span className="font-extrabold text-xs text-white block">
-                          {g.guest_name || `VIP Guest #${idx + 1}`}
-                        </span>
-                        <span className="font-mono text-[9px] text-slate-400">
-                          {g.ticket_code}
-                        </span>
-                      </div>
-
-                      {isAdmitted ? (
-                        <div className="flex items-center gap-1 bg-emerald-950 text-emerald-400 px-3 py-1 rounded-xl text-[9px] font-black uppercase border border-emerald-800">
-                          <Check className="w-3 h-3" />
-                          Admitted
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleAdmitVipGuest(g)}
-                          disabled={isAdmittingGuest}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase transition-all shadow-md cursor-pointer disabled:opacity-50"
-                        >
-                          Admit & Issue Wristband
-                        </button>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* On-the-spot Extra Guest Admittance */}
-          <form onSubmit={handleAddExtraVipGuestOnSpot} className="pt-2 border-t border-slate-800 flex gap-2">
-            <input
-              type="text"
-              placeholder="Admit walk-in guest name..."
-              value={extraGuestName}
-              onChange={(e) => setExtraGuestName(e.target.value)}
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none"
-            />
-            <button
-              type="submit"
-              disabled={isAdmittingGuest || !extraGuestName.trim()}
-              className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Admit
-            </button>
-          </form>
         </div>
       )}
 

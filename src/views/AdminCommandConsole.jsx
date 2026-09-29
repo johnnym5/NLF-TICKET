@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth, TIER_WRISTBANDS, TIER_LABELS, generateTicketCode } from '../context/AuthContext';
+import { useAuth, TIER_WRISTBANDS, TIER_LABELS, VIP_PLUS_ONES, generateTicketCode } from '../context/AuthContext';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
@@ -45,7 +45,9 @@ import {
   FolderPlus,
   Tag,
   UserPlus2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Eraser,
+  Save
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -96,6 +98,14 @@ function isUserOnline(lastSeenStr) {
   return diffMs < 120000;
 }
 
+function resolveEffectiveTier(ticketTier, profileRole) {
+  const roleLower = (profileRole || '').toLowerCase();
+  if (roleLower.includes('vip tier 1') || roleLower === 'vip_1') return 'vip_1';
+  if (roleLower.includes('vip tier 2') || roleLower === 'vip_2') return 'vip_2';
+  if (roleLower.includes('vip tier 3') || roleLower === 'vip_3') return 'vip_3';
+  return ticketTier || 'general';
+}
+
 export default function AdminCommandConsole({ onNavigate }) {
   const { currentUser, userRole } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -116,7 +126,11 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
-  // Pagination States (max 100, switchable between 10, 25, 50, 100)
+  // Admin VIP Guests Popup Modal State
+  const [adminVipGuestModalData, setAdminVipGuestModalData] = useState(null);
+  const [isSavingAdminGuests, setIsSavingAdminGuests] = useState(false);
+
+  // Pagination States
   const [ticketPageSize, setTicketPageSize] = useState(100);
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
   const [profilePageSize, setProfilePageSize] = useState(100);
@@ -138,7 +152,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [addUserModalTab, setAddUserModalTab] = useState('DETAILS');
 
-  // Manual User Entry Form State (Email optional)
+  // Manual User Entry Form State
   const [manualUserFullName, setManualUserFullName] = useState('');
   const [manualUserEmail, setManualUserEmail] = useState('');
   const [manualUserRole, setManualUserRole] = useState('attendee');
@@ -249,6 +263,134 @@ export default function AdminCommandConsole({ onNavigate }) {
       supabase.removeChannel(rolesChannel);
     };
   }, [isAuthenticated]);
+
+  const handleOpenAdminVipGuestModal = async (profile) => {
+    try {
+      let primaryTicket = tickets.find(t => t.owner_id === profile.id && !t.parent_ticket_id) ||
+                          tickets.find(t => t.owner_id === profile.id);
+
+      if (!primaryTicket) {
+        const { data: fetchedPrimary } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('owner_id', profile.id)
+          .is('parent_ticket_id', null)
+          .maybeSingle();
+        primaryTicket = fetchedPrimary;
+      }
+
+      if (primaryTicket) {
+        const { data: fetchedGuests } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('parent_ticket_id', primaryTicket.id)
+          .order('created_at', { ascending: true });
+
+        const localGuests = tickets.filter(t => t.parent_ticket_id === primaryTicket.id);
+        const guestTickets = (fetchedGuests && fetchedGuests.length > 0) ? fetchedGuests : localGuests;
+
+        const effectiveTier = resolveEffectiveTier(primaryTicket.tier, profile.role);
+        const defaultCount = VIP_PLUS_ONES[effectiveTier] || 10;
+        const initialCount = Math.max(defaultCount, guestTickets ? guestTickets.length : 0);
+
+        const map = {};
+        const ticketsMap = {};
+
+        (guestTickets || []).forEach((g, idx) => {
+          map[idx] = g.guest_name || `Guest #${idx + 1}`;
+          ticketsMap[idx] = g;
+        });
+
+        for (let i = 0; i < initialCount; i++) {
+          if (map[i] === undefined) map[i] = `Guest #${i + 1}`;
+        }
+
+        setAdminVipGuestModalData({
+          profile,
+          primaryTicket,
+          slotCount: initialCount,
+          guestTicketsMap: ticketsMap,
+          guestNamesMap: map
+        });
+      } else {
+        alert('No primary ticket record found for this user.');
+      }
+    } catch (e) {
+      alert('Error fetching VIP guests: ' + e.message);
+    }
+  };
+
+  const handleSaveAdminGuestNames = async (e) => {
+    e.preventDefault();
+    if (!adminVipGuestModalData) return;
+    setIsSavingAdminGuests(true);
+
+    try {
+      const { profile, primaryTicket, slotCount, guestTicketsMap, guestNamesMap } = adminVipGuestModalData;
+      const effectiveTier = resolveEffectiveTier(primaryTicket.tier, profile.role);
+
+      const savePromises = [];
+
+      for (let i = 0; i < slotCount; i++) {
+        const rawInput = guestNamesMap[i]?.trim();
+        const nameToSave = rawInput || `Guest #${i + 1}`;
+        const existingTicket = guestTicketsMap[i];
+
+        if (existingTicket?.id) {
+          savePromises.push(
+            supabase
+              .from('tickets')
+              .update({ guest_name: nameToSave })
+              .eq('id', existingTicket.id)
+              .select('*')
+          );
+        } else {
+          savePromises.push(
+            supabase
+              .from('tickets')
+              .insert({
+                ticket_code: `${primaryTicket.ticket_code || generateTicketCode(effectiveTier)}-G${i + 1}`,
+                owner_id: profile.id,
+                tier: effectiveTier,
+                parent_ticket_id: primaryTicket.id,
+                guest_name: nameToSave,
+                is_manual: false,
+                created_by: currentUser?.id,
+                status: 'valid'
+              })
+              .select('*')
+          );
+        }
+      }
+
+      const results = await Promise.all(savePromises);
+
+      const errors = results.map(r => r.error).filter(Boolean);
+      if (errors.length > 0) {
+        console.error('Errors saving guest names:', errors);
+        const errMsg = errors.map(err => err.message || JSON.stringify(err)).join('; ');
+        throw new Error(errMsg);
+      }
+
+      // Re-fetch tickets to refresh local state immediately
+      const { data: updatedTickets, error: fetchErr } = await supabase
+        .from('tickets')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (updatedTickets && !fetchErr) {
+        setTickets(updatedTickets);
+      }
+
+      alert(`VIP Guest list updated successfully with ${slotCount} guest slots!`);
+      setAdminVipGuestModalData(null);
+    } catch (err) {
+      console.error('Failed to update VIP guests:', err);
+      alert('Failed to update VIP guests: ' + err.message);
+    } finally {
+      setIsSavingAdminGuests(false);
+    }
+  };
 
   const handleCreateManualUser = async (e) => {
     e.preventDefault();
@@ -384,6 +526,30 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   };
 
+  const handlePurgeAdminTickets = async () => {
+    if (!window.confirm('Purge all duplicate admin ticket records from database?')) return;
+    try {
+      const adminProfiles = profiles.filter(p => ['admin', 'executive_admin'].includes((p.role || '').toLowerCase()) || p.email === 'admin@livestockcarnival.ng' || p.email === 'admin@gcc.com');
+      const adminIds = adminProfiles.map(p => p.id);
+
+      const ticketIdsToDelete = tickets
+        .filter(t => adminIds.includes(t.owner_id))
+        .map(t => t.id);
+
+      if (ticketIdsToDelete.length > 0) {
+        const { error } = await supabase.from('tickets').delete().in('id', ticketIdsToDelete);
+        if (error) throw error;
+
+        setTickets(prev => prev.filter(t => !ticketIdsToDelete.includes(t.id)));
+        alert(`Successfully purged ${ticketIdsToDelete.length} duplicate admin tickets from database!`);
+      } else {
+        alert('No admin ticket records found to purge.');
+      }
+    } catch (err) {
+      alert('Purge failed: ' + err.message);
+    }
+  };
+
   const handleGenerateVipLink = async () => {
     setIsGenerating(true);
     const inviteId = Math.random().toString(36).substring(2, 15);
@@ -503,7 +669,8 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   const handleAssignRoleAndGate = async (profileId, role, gateId) => {
     try {
-      const updatePayload = { role: role.toLowerCase() };
+      const roleLower = role.toLowerCase();
+      const updatePayload = { role: roleLower };
       if (gateId !== undefined) updatePayload.assigned_gate_id = gateId || null;
 
       const { error } = await supabase
@@ -513,28 +680,93 @@ export default function AdminCommandConsole({ onNavigate }) {
 
       if (error) throw error;
 
-      // Auto-issue ticket if role assigned belongs to attendee category
-      const targetRoleObj = customRoles.find(r => r.name.toLowerCase() === role.toLowerCase());
-      if (targetRoleObj?.category === 'attendee' || role.toLowerCase() === 'attendee' || role.toLowerCase() === 'vendors' || role.toLowerCase() === 'exhibitors') {
-        const { data: existingTicket } = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('owner_id', profileId)
-          .is('parent_ticket_id', null)
-          .maybeSingle();
+      // Determine corresponding ticket tier
+      let targetTier = 'general';
+      if (roleLower.includes('vip tier 1') || roleLower === 'vip_1') targetTier = 'vip_1';
+      else if (roleLower.includes('vip tier 2') || roleLower === 'vip_2') targetTier = 'vip_2';
+      else if (roleLower.includes('vip tier 3') || roleLower === 'vip_3') targetTier = 'vip_3';
 
-        if (!existingTicket) {
-          const ticketCode = generateTicketCode('general');
-          await supabase
+      // Update or Insert ticket for this user
+      const { data: existingTicket } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('owner_id', profileId)
+        .is('parent_ticket_id', null)
+        .maybeSingle();
+
+      if (existingTicket) {
+        const { data: updatedTicket } = await supabase
+          .from('tickets')
+          .update({ tier: targetTier })
+          .eq('id', existingTicket.id)
+          .select('*')
+          .single();
+
+        if (updatedTicket) {
+          setTickets(prev => prev.map(t => t.id === updatedTicket.id ? updatedTicket : t));
+        }
+
+        // Auto-provision +10 / +15 / +20 guest tickets if VIP tier
+        const plusOnes = VIP_PLUS_ONES[targetTier] || 0;
+        if (plusOnes > 0) {
+          const { data: existingGuests } = await supabase
             .from('tickets')
-            .insert({
-              ticket_code: ticketCode,
-              owner_id: profileId,
-              tier: 'general',
-              is_manual: false,
-              created_by: currentUser?.id,
-              status: 'valid'
-            });
+            .select('*')
+            .eq('parent_ticket_id', existingTicket.id);
+
+          if (!existingGuests || existingGuests.length < plusOnes) {
+            const guestTickets = [];
+            const startNum = existingGuests ? existingGuests.length + 1 : 1;
+            for (let i = startNum; i <= plusOnes; i++) {
+              guestTickets.push({
+                ticket_code: generateTicketCode(targetTier) + `-G${i}`,
+                owner_id: profileId,
+                tier: targetTier,
+                parent_ticket_id: existingTicket.id,
+                guest_name: null, // Blank placeholder until VIP assigns guest name
+                is_manual: false,
+                created_by: currentUser?.id,
+                status: 'valid'
+              });
+            }
+            await supabase.from('tickets').insert(guestTickets);
+          }
+        }
+      } else {
+        const ticketCode = generateTicketCode(targetTier);
+        const { data: newTicket } = await supabase
+          .from('tickets')
+          .insert({
+            ticket_code: ticketCode,
+            owner_id: profileId,
+            tier: targetTier,
+            is_manual: false,
+            created_by: currentUser?.id,
+            status: 'valid'
+          })
+          .select('*')
+          .single();
+
+        if (newTicket) {
+          setTickets(prev => [newTicket, ...prev]);
+
+          const plusOnes = VIP_PLUS_ONES[targetTier] || 0;
+          if (plusOnes > 0) {
+            const guestTickets = [];
+            for (let i = 1; i <= plusOnes; i++) {
+              guestTickets.push({
+                ticket_code: generateTicketCode(targetTier) + `-G${i}`,
+                owner_id: profileId,
+                tier: targetTier,
+                parent_ticket_id: newTicket.id,
+                guest_name: null, // Blank placeholder until VIP assigns guest name
+                is_manual: false,
+                created_by: currentUser?.id,
+                status: 'valid'
+              });
+            }
+            await supabase.from('tickets').insert(guestTickets);
+          }
         }
       }
 
@@ -583,24 +815,22 @@ export default function AdminCommandConsole({ onNavigate }) {
     return true;
   };
 
-  // Primary Tickets Stats (Filters parent/primary user passes to avoid double counting child guest passes)
+  // Active Attendee Ticket Stats (Counts all primary passes + all guest passes)
   const stats = useMemo(() => {
     const now = new Date();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0,0,0,0);
 
-    const primaryTickets = tickets.filter(t => !t.parent_ticket_id);
+    const total = tickets.length;
+    const ticketsToday = tickets.filter(t => new Date(t.created_at || t.createdAt).toDateString() === now.toDateString()).length;
+    const ticketsThisWeek = tickets.filter(t => new Date(t.created_at || t.createdAt) >= startOfWeek).length;
+    const ticketsThisMonth = tickets.filter(t => new Date(t.created_at || t.createdAt).getMonth() === now.getMonth()).length;
 
-    const total = primaryTickets.length;
-    const ticketsToday = primaryTickets.filter(t => new Date(t.created_at || t.createdAt).toDateString() === now.toDateString()).length;
-    const ticketsThisWeek = primaryTickets.filter(t => new Date(t.created_at || t.createdAt) >= startOfWeek).length;
-    const ticketsThisMonth = primaryTickets.filter(t => new Date(t.created_at || t.createdAt).getMonth() === now.getMonth()).length;
-
-    const checkedIn = primaryTickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
-    const pending = primaryTickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
-    const revoked = primaryTickets.filter(t => t.status === 'revoked').length;
-    const manualCount = primaryTickets.filter(t => t.is_manual).length;
+    const checkedIn = tickets.filter(t => t.status === 'used' || t.status === 'CHECKED_IN').length;
+    const pending = tickets.filter(t => t.status === 'valid' || t.status === 'REGISTERED').length;
+    const revoked = tickets.filter(t => t.status === 'revoked').length;
+    const manualCount = tickets.filter(t => t.is_manual).length;
 
     const turnoutRate = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
 
@@ -669,6 +899,11 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   const filteredTickets = useMemo(() => {
     return tickets.filter(t => {
+      // Grouping: Show ONLY primary passes as table rows
+      if (t.parent_ticket_id) return false;
+
+      const childGuests = tickets.filter(c => c.parent_ticket_id === t.id);
+
       const queryStr = searchTerm.toLowerCase();
       const code = (t.ticket_code || t.ticketCode || '').toLowerCase();
       const owner = profileMap.get(t.owner_id);
@@ -678,14 +913,35 @@ export default function AdminCommandConsole({ onNavigate }) {
       const matchesSearch = !searchTerm ||
         code.includes(queryStr) ||
         ownerName.includes(queryStr) ||
-        ownerEmail.includes(queryStr);
+        ownerEmail.includes(queryStr) ||
+        childGuests.some(cg =>
+          (cg.ticket_code || cg.ticketCode || '').toLowerCase().includes(queryStr) ||
+          (cg.guest_name || '').toLowerCase().includes(queryStr)
+        );
 
       if (!matchesSearch) return false;
 
-      if (activeFilter === 'CHECKED_IN' && t.status !== 'used' && t.status !== 'CHECKED_IN') return false;
-      if (activeFilter === 'PENDING' && t.status !== 'valid' && t.status !== 'REGISTERED') return false;
-      if (activeFilter === 'REVOKED' && t.status !== 'revoked') return false;
-      if (activeFilter === 'MANUAL' && !t.is_manual) return false;
+      if (activeFilter === 'CHECKED_IN') {
+        const primaryMatch = t.status === 'used' || t.status === 'CHECKED_IN';
+        const childMatch = childGuests.some(c => c.status === 'used' || c.status === 'CHECKED_IN');
+        if (!primaryMatch && !childMatch) return false;
+      }
+      if (activeFilter === 'PENDING') {
+        const primaryMatch = t.status === 'valid' || t.status === 'REGISTERED';
+        const childMatch = childGuests.some(c => c.status === 'valid' || c.status === 'REGISTERED');
+        if (!primaryMatch && !childMatch) return false;
+      }
+      if (activeFilter === 'REVOKED') {
+        const primaryMatch = t.status === 'revoked';
+        const childMatch = childGuests.some(c => c.status === 'revoked');
+        if (!primaryMatch && !childMatch) return false;
+      }
+      if (activeFilter === 'MANUAL') {
+        const primaryMatch = t.is_manual;
+        const childMatch = childGuests.some(c => c.is_manual);
+        if (!primaryMatch && !childMatch) return false;
+      }
+
       if (tierFilter !== 'ALL' && t.tier !== tierFilter) return false;
 
       if (!isInTimeScope(t.created_at || t.createdAt, regTimeScope)) return false;
@@ -722,46 +978,6 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header Bar & Dashboard Navigation Tabs */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm space-y-6">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 uppercase tracking-tight">
-            Admin Dashboard Console
-          </h1>
-          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">
-            Real-Time Event Operations & Gate Control
-          </p>
-        </div>
-
-        {/* 4 Feature Tabs (1 line on desktop, 2x2 grid on mobile with toggle open/close) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-100 p-2 rounded-2xl">
-          {[
-            { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
-            { id: 'gates', label: 'Venue Gates', icon: MapPin },
-            { id: 'staff', label: 'Personnel & Roles', icon: Shield },
-            { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(prev => prev === tab.id ? null : tab.id)}
-                className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-[#0F4A2F] text-white shadow-md scale-[1.02]'
-                    : 'bg-white/70 sm:bg-transparent text-slate-600 hover:text-slate-900 hover:bg-white'
-                }`}
-                title={isActive ? 'Click to close section' : `Click to open ${tab.label}`}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="truncate">{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {/* DYNAMIC ROLE & GROUP MANAGER + WRISTBAND CONFIGURATOR (Collapsible - Always Starts Closed) */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
@@ -954,7 +1170,7 @@ export default function AdminCommandConsole({ onNavigate }) {
               <button
                 onClick={handleGenerateVipLink}
                 disabled={isGenerating}
-                className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50"
+                className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 {isGenerating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
                 Generate VIP Link
@@ -968,7 +1184,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                 <div className="flex-1 font-mono text-[10px] text-slate-500 truncate px-2">{generatedVipUrl}</div>
                 <button
                   onClick={handleCopyVipLink}
-                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
                 >
                   {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                   {copiedLink ? 'Copied!' : 'Copy'}
@@ -1123,17 +1339,60 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
       </div>
 
+      {/* Header Bar & Dashboard Navigation Tabs */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm space-y-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 uppercase tracking-tight">
+            Admin Dashboard Console
+          </h1>
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">
+            Real-Time Event Operations & Gate Control
+          </p>
+        </div>
+
+        {/* 4 Feature Tabs (1 line on desktop, 2x2 grid on mobile with toggle open/close) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-100 p-2 rounded-2xl">
+          {[
+            { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
+            { id: 'gates', label: 'Venue Gates', icon: MapPin },
+            { id: 'staff', label: 'Personnel & Roles', icon: Shield },
+            { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
+          ].map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(prev => prev === tab.id ? null : tab.id)}
+                className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-[#0F4A2F] text-white shadow-md scale-[1.02]'
+                    : 'bg-white/70 sm:bg-transparent text-slate-600 hover:text-slate-900 hover:bg-white'
+                }`}
+                title={isActive ? 'Click to close section' : `Click to open ${tab.label}`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="truncate">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* TAB 1: TICKETS REGISTRY */}
       {activeTab === 'tickets' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text" placeholder="Search attendee name, email, or ticket code..."
-                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
-                value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-              />
+            <div className="relative flex-1 w-full flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text" placeholder="Search attendee name, email, or ticket code..."
+                  className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
+                  value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -1170,6 +1429,10 @@ export default function AdminCommandConsole({ onNavigate }) {
                     const owner = profileMap.get(t.owner_id);
                     const displayName = owner?.full_name || t.fullName || 'Attendee';
                     const displayEmail = owner?.email || t.email || '';
+                    const effectiveTier = resolveEffectiveTier(t.tier, owner?.role);
+
+                    const childGuests = tickets.filter(c => c.parent_ticket_id === t.id);
+                    const guestCount = childGuests.length;
 
                     // 3-Day Attendance Telemetry
                     const days = t.days_attended || t.daysAttended || {};
@@ -1192,13 +1455,28 @@ export default function AdminCommandConsole({ onNavigate }) {
                     return (
                       <tr key={t.id} className="hover:bg-slate-50">
                         <td className="p-4">
-                          <div className="font-extrabold text-slate-900 text-sm">{displayName}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-slate-900 text-sm">{displayName}</span>
+                            {guestCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAdminVipGuestModal(owner || { id: t.owner_id, full_name: displayName, email: displayEmail })}
+                                className="px-2 py-0.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 rounded-full text-[11px] font-black cursor-pointer transition-all flex items-center gap-1 shadow-2xs"
+                                title="Click to view and edit guest manifest popup"
+                              >
+                                <Crown className="w-3 h-3 text-amber-500 shrink-0" />
+                                (+{guestCount} {guestCount === 1 ? 'Attendee' : 'Attendees'})
+                              </button>
+                            )}
+                          </div>
                           <div className="text-[10px] font-mono font-bold text-slate-500 flex items-center gap-1.5 mt-0.5">
                             <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{t.ticket_code || t.ticketCode}</span>
                             {displayEmail && <span className="text-slate-400 font-sans font-medium">({displayEmail})</span>}
                           </div>
                         </td>
-                        <td className="p-4 uppercase font-black">{t.tier}</td>
+                        <td className="p-4 uppercase font-black">
+                          {effectiveTier === 'vip_1' ? 'VIP TIER 1' : effectiveTier === 'vip_2' ? 'VIP TIER 2' : effectiveTier === 'vip_3' ? 'VIP TIER 3' : 'GENERAL'}
+                        </td>
                         <td className="p-4">
                           {t.is_manual ? <Badge variant="gold">MANUAL</Badge> : <Badge variant="pending">DIGITAL</Badge>}
                         </td>
@@ -1393,6 +1671,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                   const isStaff = isStaffRole(p.role);
                   const wristband = getRoleWristbandObj(p.role);
                   const isManualUser = p.email && p.email.startsWith('manual-');
+                  const isVipUser = (p.role || '').toLowerCase().includes('vip');
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">
@@ -1458,13 +1737,26 @@ export default function AdminCommandConsole({ onNavigate }) {
                         ) : null}
                       </td>
                       <td className="p-4 text-right">
-                        <button
-                          onClick={() => handleDeleteProfile(p.id)}
-                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
-                          title="Delete User Profile"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isVipUser && (
+                            <button
+                              onClick={() => handleOpenAdminVipGuestModal(p)}
+                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+                              title="Manage VIP Accompanying Guest Names"
+                            >
+                              <Users className="w-3.5 h-3.5 text-amber-600" />
+                              <span>VIP Guests</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => handleDeleteProfile(p.id)}
+                            className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                            title="Delete User Profile"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1570,6 +1862,142 @@ export default function AdminCommandConsole({ onNavigate }) {
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN VIP GUEST MANIFEST POPUP MODAL */}
+      {adminVipGuestModalData && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full space-y-5 animate-fadeIn shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-amber-500" />
+                <div>
+                  <h3 className="text-sm font-black uppercase text-slate-900">
+                    VIP Guest Manifest: {adminVipGuestModalData.profile.full_name || adminVipGuestModalData.profile.email}
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-medium">
+                    Manage accompanying guest names & custom allowance ({adminVipGuestModalData.slotCount} Guests)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAdminVipGuestModalData(null)}
+                className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Custom Guest Allowance Controller */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <span className="text-[10px] font-black uppercase text-slate-600">
+                Custom Guest Allowance:
+              </span>
+
+              <div className="flex items-center gap-2">
+                {[10, 15, 20, 25].map(cnt => (
+                  <button
+                    key={cnt}
+                    type="button"
+                    onClick={() => {
+                      const newMap = { ...adminVipGuestModalData.guestNamesMap };
+                      for (let i = 0; i < cnt; i++) {
+                        if (newMap[i] === undefined) newMap[i] = '';
+                      }
+                      setAdminVipGuestModalData({
+                        ...adminVipGuestModalData,
+                        slotCount: cnt,
+                        guestNamesMap: newMap
+                      });
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all cursor-pointer ${
+                      adminVipGuestModalData.slotCount === cnt ? 'bg-[#0F4A2F] text-white shadow-xs' : 'bg-white text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    {cnt} Slots
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newCount = adminVipGuestModalData.slotCount + 1;
+                    const newMap = { ...adminVipGuestModalData.guestNamesMap };
+                    if (newMap[newCount - 1] === undefined) newMap[newCount - 1] = '';
+                    setAdminVipGuestModalData({
+                      ...adminVipGuestModalData,
+                      slotCount: newCount,
+                      guestNamesMap: newMap
+                    });
+                  }}
+                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  Slot
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveAdminGuestNames} className="space-y-4">
+              <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                {Array.from({ length: adminVipGuestModalData.slotCount }).map((_, idx) => {
+                  const g = adminVipGuestModalData.guestTicketsMap[idx];
+                  const passCode = g?.ticket_code || g?.ticketCode || (adminVipGuestModalData.primaryTicket?.ticket_code ? `${adminVipGuestModalData.primaryTicket.ticket_code}-G${idx + 1}` : `G${idx + 1}`);
+
+                  return (
+                    <div key={idx} className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-slate-500 w-16 shrink-0 uppercase">
+                          Guest #{idx + 1}:
+                        </span>
+                        <input
+                          type="text"
+                          placeholder={`e.g. Guest Name #${idx + 1}`}
+                          value={adminVipGuestModalData.guestNamesMap[idx] || ''}
+                          onChange={(e) => setAdminVipGuestModalData({
+                            ...adminVipGuestModalData,
+                            guestNamesMap: {
+                              ...adminVipGuestModalData.guestNamesMap,
+                              [idx]: e.target.value
+                            }
+                          })}
+                          className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 outline-none focus:border-[#0F4A2F]"
+                        />
+                        <Badge variant={g?.status === 'used' || g?.status === 'CHECKED_IN' ? 'success' : 'pending'} className="text-[8px] shrink-0">
+                          {g?.status === 'used' || g?.status === 'CHECKED_IN' ? 'ADMITTED' : 'VALID'}
+                        </Badge>
+                      </div>
+
+                      {/* Display Pass Code & Unique Ticket ID */}
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-200/60">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-sans text-[9px] uppercase font-bold text-slate-400">Pass Code:</span>
+                          <span className="bg-white px-2 py-0.5 rounded-md border border-slate-200 font-bold text-slate-800 shadow-2xs">
+                            {passCode}
+                          </span>
+                        </div>
+                        {g?.id && (
+                          <span className="text-[9px] text-slate-400 font-mono">
+                            ID: {g.id.substring(0, 8)}...
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <Button type="button" variant="secondary" className="flex-1" onClick={() => setAdminVipGuestModalData(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1" loading={isSavingAdminGuests} icon={Save}>
+                  Save VIP Guest List
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -66,7 +66,7 @@ export default function RegistryView() {
       <ScrollReveal delay={400}>
         <div className="text-center p-8 bg-slate-50 rounded-2xl border-2 border-slate-200/60">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">Registry Inquiries</p>
-          <p className="text-slate-600 font-black">registry@nlf.gov.ng</p>
+          <p className="text-slate-600 font-black">support@livestockcarnival.ng</p>
         </div>
       </ScrollReveal>
     </div>

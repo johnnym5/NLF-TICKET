@@ -42,7 +42,7 @@ export default function PrivacyView() {
                   "Official attendance telemetry for ministerial reporting.",
                   "Emergency notifications regarding event schedule changes."
                 ].map((item, i) => (
-                  <li key={i} className="flex items-start gap-3 text-slate-600 font-medium">
+                  <li key={i} className="flex items-start gap-3 text-sage-deep shrink-0 font-medium">
                     <ChevronRight className="w-4 h-4 mt-1 text-sage-deep shrink-0" />
                     <span>{item}</span>
                   </li>
@@ -66,7 +66,7 @@ export default function PrivacyView() {
       <ScrollReveal delay={400}>
         <div className="text-center p-8 bg-slate-50 rounded-2xl border-2 border-slate-200/60">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">Contact Officer</p>
-          <p className="text-slate-600 font-black">privacy@nlf.gov.ng</p>
+          <p className="text-slate-600 font-black">support@livestockcarnival.ng</p>
         </div>
       </ScrollReveal>
     </div>

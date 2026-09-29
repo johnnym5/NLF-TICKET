@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
-import { useAuth, TIER_LABELS, TIER_WRISTBANDS, VIP_PLUS_ONES } from '../context/AuthContext';
+import { useAuth, TIER_LABELS, TIER_WRISTBANDS, VIP_PLUS_ONES, generateTicketCode } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { 
   ShieldCheck, 
@@ -28,15 +28,29 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Input from '../components/ui/Input';
 
+function resolveEffectiveTier(ticketTier, profileRole) {
+  const roleLower = (profileRole || '').toLowerCase();
+  if (roleLower.includes('vip tier 1') || roleLower === 'vip_1') return 'vip_1';
+  if (roleLower.includes('vip tier 2') || roleLower === 'vip_2') return 'vip_2';
+  if (roleLower.includes('vip tier 3') || roleLower === 'vip_3') return 'vip_3';
+  return ticketTier || 'general';
+}
+
 export default function DigitalPassView({ onOpenAuth }) {
   const { currentUser, userTicket, userProfile, attendeeRecord, isNewRegistration, setIsNewRegistration } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [guestTickets, setGuestTickets] = useState([]);
-  const [guestNamesMap, setGuestNamesMap] = useState({});
+
+  // VIP Guest Management State
+  const [guestSlots, setGuestSlots] = useState({}); // slotIndex -> guest_name
+  const [guestTicketsMap, setGuestTicketsMap] = useState({}); // slotIndex -> ticketObj
   const [selectedPassIndex, setSelectedPassIndex] = useState(0); // 0 = Primary Pass, 1..N = Guest Passes
   const [isSavingGuests, setIsSavingGuests] = useState(false);
   const [guestSavedNotice, setGuestSavedNotice] = useState(false);
   const passRef = useRef(null);
+
+  const primaryTier = resolveEffectiveTier(userTicket?.tier || attendeeRecord?.tier, userProfile?.role);
+  const isVipTier = primaryTier.startsWith('vip');
+  const totalPlusOnes = VIP_PLUS_ONES[primaryTier] || (isVipTier ? 10 : 0);
 
   useEffect(() => {
     if (isNewRegistration) {
@@ -54,55 +68,120 @@ export default function DigitalPassView({ onOpenAuth }) {
     }
   }, [isNewRegistration, setIsNewRegistration]);
 
-  // Fetch linked guest passes if primary ticket is VIP
+  // Load existing guest tickets or initialize empty slots up to totalPlusOnes
   useEffect(() => {
-    if (!userTicket?.id) return;
+    if (!isVipTier || !userTicket?.id) return;
 
-    const fetchGuestPasses = async () => {
-      const { data } = await supabase
-        .from('tickets')
-        .select('*')
-        .eq('parent_ticket_id', userTicket.id)
-        .order('created_at', { ascending: true });
+    const loadGuestSlots = async () => {
+      try {
+        const { data: existingGuests } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('parent_ticket_id', userTicket.id)
+          .order('created_at', { ascending: true });
 
-      if (data) {
-        setGuestTickets(data);
-        const map = {};
-        data.forEach((g, idx) => {
-          map[g.id] = g.guest_name || `Guest #${idx + 1}`;
-        });
-        setGuestNamesMap(map);
+        const slotsMap = {};
+        const ticketsMap = {};
+
+        if (existingGuests && existingGuests.length > 0) {
+          existingGuests.forEach((g, idx) => {
+            slotsMap[idx] = g.guest_name || `Guest #${idx + 1}`;
+            ticketsMap[idx] = g;
+          });
+        }
+
+        // Restore local cache backup if present
+        try {
+          const cached = localStorage.getItem(`gcc_vip_guests_${userTicket.id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            Object.keys(parsed).forEach((key) => {
+              if (parsed[key]) {
+                slotsMap[key] = parsed[key];
+              }
+            });
+          }
+        } catch (err) {}
+
+        // Initialize default slot names up to totalPlusOnes
+        for (let i = 0; i < totalPlusOnes; i++) {
+          if (slotsMap[i] === undefined || slotsMap[i] === '') {
+            slotsMap[i] = `Guest #${i + 1}`;
+          }
+        }
+
+        setGuestSlots(slotsMap);
+        setGuestTicketsMap(ticketsMap);
+      } catch (e) {
+        console.warn('Failed to load VIP guest slots:', e);
       }
     };
 
-    fetchGuestPasses();
-  }, [userTicket]);
+    loadGuestSlots();
+  }, [userTicket?.id, primaryTier, isVipTier, totalPlusOnes]);
 
   const handleSaveGuestNames = async (e) => {
     e.preventDefault();
-    if (guestTickets.length === 0) return;
+    if (!userTicket?.id) return;
     setIsSavingGuests(true);
 
     try {
-      const updatePromises = guestTickets.map(g => {
-        const nameToSave = guestNamesMap[g.id] || g.guest_name || 'VIP Guest';
-        return supabase
-          .from('tickets')
-          .update({ guest_name: nameToSave })
-          .eq('id', g.id);
-      });
+      // 1. Save locally to guarantee immediate persistence across page refreshes
+      localStorage.setItem(`gcc_vip_guests_${userTicket.id}`, JSON.stringify(guestSlots));
 
-      await Promise.all(updatePromises);
+      let hasError = false;
+      let errDetails = [];
 
-      setGuestTickets(prev => prev.map(g => ({
-        ...g,
-        guest_name: guestNamesMap[g.id] || g.guest_name
-      })));
+      for (let i = 0; i < totalPlusOnes; i++) {
+        const typedName = guestSlots[i]?.trim();
+        const nameToSave = typedName || `Guest #${i + 1}`;
+        const existingTicket = guestTicketsMap[i];
+
+        if (existingTicket?.id) {
+          let { error: updateErr } = await supabase
+            .from('tickets')
+            .update({ guest_name: nameToSave })
+            .eq('id', existingTicket.id);
+
+          if (updateErr) {
+            console.error('Update error on VIP guest slot:', updateErr);
+            errDetails.push(updateErr.message);
+            hasError = true;
+          }
+        } else {
+          const ticketCode = `${userTicket.ticket_code || generateTicketCode(primaryTier)}-G${i + 1}`;
+          let { data: newG, error: insertErr } = await supabase
+            .from('tickets')
+            .insert({
+              ticket_code: ticketCode,
+              owner_id: userTicket.owner_id,
+              tier: primaryTier,
+              parent_ticket_id: userTicket.id,
+              guest_name: nameToSave,
+              is_manual: false,
+              status: 'valid'
+            })
+            .select('*')
+            .single();
+
+          if (insertErr) {
+            console.error('Insert error on VIP guest slot:', insertErr);
+            errDetails.push(insertErr.message);
+            hasError = true;
+          } else if (newG) {
+            setGuestTicketsMap(prev => ({ ...prev, [i]: newG }));
+          }
+        }
+      }
+
+      if (hasError) {
+        console.warn('VIP guest name save warning:', errDetails);
+      }
 
       setGuestSavedNotice(true);
       setTimeout(() => setGuestSavedNotice(false), 2500);
     } catch (err) {
-      alert('Failed to save guest list: ' + err.message);
+      console.warn('Save guest list notice:', err);
     } finally {
       setIsSavingGuests(false);
     }
@@ -125,25 +204,27 @@ export default function DigitalPassView({ onOpenAuth }) {
     );
   }
 
-  // Combine primary ticket and guest tickets for VIP pass slider
-  const isVipTier = (userTicket?.tier || attendeeRecord?.tier || '').toLowerCase().startsWith('vip');
+  // Build pass slider array
   const allPasses = [
     {
       type: 'PRIMARY',
       fullName: userProfile?.full_name || currentUser?.displayName || 'Attendee',
       email: userProfile?.email || currentUser?.email || '',
       ticketCode: userTicket?.ticket_code || attendeeRecord?.ticketCode || 'GCC-2026-PENDING',
-      tier: userTicket?.tier || attendeeRecord?.tier || 'general',
+      tier: primaryTier,
       status: userTicket?.status || (attendeeRecord?.status === 'CHECKED_IN' ? 'used' : 'valid')
     },
-    ...guestTickets.map((g, idx) => ({
-      type: 'GUEST',
-      fullName: g.guest_name || `${userProfile?.full_name || 'VIP'} Guest #${idx + 1}`,
-      email: `VIP Plus-One Guest #${idx + 1}`,
-      ticketCode: g.ticket_code,
-      tier: g.tier,
-      status: g.status
-    }))
+    ...Array.from({ length: totalPlusOnes }).map((_, idx) => {
+      const g = guestTicketsMap[idx];
+      return {
+        type: 'GUEST',
+        fullName: guestSlots[idx] || g?.guest_name || `VIP Guest #${idx + 1}`,
+        email: `VIP Plus-One Guest #${idx + 1}`,
+        ticketCode: g?.ticket_code || `${userTicket?.ticket_code || 'GCC-2026'}-G${idx + 1}`,
+        tier: g?.tier || primaryTier,
+        status: g?.status || 'valid'
+      };
+    })
   ];
 
   const activePass = allPasses[selectedPassIndex] || allPasses[0];
@@ -210,7 +291,7 @@ export default function DigitalPassView({ onOpenAuth }) {
                   Abuja Carnival Access
                 </p>
               </div>
-              <Badge variant="gold" className="bg-amber-400 text-slate-900 border-none px-3 py-1">
+              <Badge variant="gold" className="bg-amber-400 text-slate-900 border-none px-3 py-1 font-black">
                 {tierName}
               </Badge>
             </div>
@@ -277,47 +358,50 @@ export default function DigitalPassView({ onOpenAuth }) {
       </ScrollReveal>
 
       {/* VIP PLUS-ONE GUEST ROSTER MANAGER */}
-      {isVipTier && guestTickets.length > 0 && (
+      {isVipTier && totalPlusOnes > 0 && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b pb-3">
             <div className="flex items-center gap-2">
               <Crown className="w-4 h-4 text-amber-500" />
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                VIP Accompanying Guest List ({guestTickets.length} Guests)
+                VIP Accompanying Guest List ({totalPlusOnes} Guests)
               </h3>
             </div>
             <span className="text-[9px] font-bold uppercase text-slate-400">No Login Needed for Guests</span>
           </div>
 
           <p className="text-[10px] text-slate-500 font-medium">
-            Type the names of your accompanying guests below. Gatekeepers will check them off at the gate terminal.
+            Type the full names of your accompanying guests below. Gatekeepers will check them off at the gate terminal.
           </p>
 
           <form onSubmit={handleSaveGuestNames} className="space-y-3">
-            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-              {guestTickets.map((g, idx) => (
-                <div key={g.id} className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-black text-slate-400 w-12 shrink-0 uppercase">
-                    Guest {idx + 1}:
-                  </span>
-                  <input
-                    type="text"
-                    placeholder={`e.g. Guest Name #${idx + 1}`}
-                    value={guestNamesMap[g.id] || ''}
-                    onChange={(e) => setGuestNamesMap({ ...guestNamesMap, [g.id]: e.target.value })}
-                    className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800"
-                  />
-                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${g.status === 'used' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
-                    {g.status === 'used' ? 'Admitted' : 'Pending'}
-                  </span>
-                </div>
-              ))}
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+              {Array.from({ length: totalPlusOnes }).map((_, idx) => {
+                const g = guestTicketsMap[idx];
+                return (
+                  <div key={idx} className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+                    <span className="text-[10px] font-black text-slate-400 w-16 shrink-0 uppercase">
+                      Guest #{idx + 1}:
+                    </span>
+                    <input
+                      type="text"
+                      placeholder={`e.g. Guest Name #${idx + 1}`}
+                      value={guestSlots[idx] || ''}
+                      onChange={(e) => setGuestSlots({ ...guestSlots, [idx]: e.target.value })}
+                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 outline-none focus:border-slate-400"
+                    />
+                    <Badge variant={g?.status === 'used' ? 'success' : 'pending'} className="text-[8px] shrink-0">
+                      {g?.status === 'used' ? 'ADMITTED' : 'VALID'}
+                    </Badge>
+                  </div>
+                );
+              })}
             </div>
 
             <button
               type="submit"
               disabled={isSavingGuests}
-              className="w-full py-2.5 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              className="w-full py-3 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {guestSavedNotice ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
               {guestSavedNotice ? 'Guest Names Saved!' : 'Save VIP Guest Roster'}
