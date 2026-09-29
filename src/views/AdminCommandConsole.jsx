@@ -45,8 +45,7 @@ import {
   FolderPlus,
   Tag,
   UserPlus2,
-  SlidersHorizontal,
-  Eraser
+  SlidersHorizontal
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -117,10 +116,10 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [tierFilter, setTierFilter] = useState('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState('STAFF');
 
-  // Pagination States (always start at 10 items per page)
-  const [ticketPageSize, setTicketPageSize] = useState(10);
+  // Pagination States (max 100, switchable between 10, 25, 50, 100)
+  const [ticketPageSize, setTicketPageSize] = useState(100);
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
-  const [profilePageSize, setProfilePageSize] = useState(10);
+  const [profilePageSize, setProfilePageSize] = useState(100);
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
 
   // Collapsible Panel State (Always Starts Closed)
@@ -139,7 +138,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [addUserModalTab, setAddUserModalTab] = useState('DETAILS');
 
-  // Manual User Entry Form State
+  // Manual User Entry Form State (Email optional)
   const [manualUserFullName, setManualUserFullName] = useState('');
   const [manualUserEmail, setManualUserEmail] = useState('');
   const [manualUserRole, setManualUserRole] = useState('attendee');
@@ -382,26 +381,6 @@ export default function AdminCommandConsole({ onNavigate }) {
       setTickets(prev => prev.filter(t => t.id !== ticket.id));
     } catch (err) {
       alert('Failed to delete ticket: ' + err.message);
-    }
-  };
-
-  const handlePurgeAdminTickets = async () => {
-    if (!window.confirm('Purge all duplicate admin ticket records from database?')) return;
-    try {
-      const adminProfiles = profiles.filter(p => ['admin', 'executive_admin'].includes((p.role || '').toLowerCase()) || p.email === 'admin@livestockcarnival.ng' || p.email === 'admin@gcc.com');
-      const adminIds = adminProfiles.map(p => p.id);
-
-      if (adminIds.length > 0) {
-        const { error } = await supabase.from('tickets').delete().in('owner_id', adminIds);
-        if (error) throw error;
-
-        setTickets(prev => prev.filter(t => !adminIds.includes(t.owner_id)));
-        alert('All duplicate admin ticket records purged successfully!');
-      } else {
-        alert('No admin user profiles found to purge.');
-      }
-    } catch (err) {
-      alert('Purge failed: ' + err.message);
     }
   };
 
@@ -1148,24 +1127,13 @@ export default function AdminCommandConsole({ onNavigate }) {
       {activeTab === 'tickets' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="relative flex-1 w-full flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text" placeholder="Search attendee name, email, or ticket code..."
-                  className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
-                  value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                />
-              </div>
-
-              <button
-                onClick={handlePurgeAdminTickets}
-                className="px-3 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition-colors"
-                title="Purge all duplicate admin pass records"
-              >
-                <Eraser className="w-3.5 h-3.5" />
-                Purge Admin Passes
-              </button>
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text" placeholder="Search attendee name, email, or ticket code..."
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-2xl text-xs font-medium"
+                value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              />
             </div>
 
             <div className="flex items-center gap-2">

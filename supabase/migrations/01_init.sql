@@ -63,7 +63,18 @@ VALUES
   ('VIP Tier 3', 'attendee', 'Obsidian Platinum', '#0F172A')
 ON CONFLICT (name) DO NOTHING;
 
--- 4. Profiles Table (Supports custom role names as TEXT)
+-- 4. VIP Invitations Table
+CREATE TABLE IF NOT EXISTS public.vip_invitations (
+  id TEXT PRIMARY KEY,
+  tier TEXT NOT NULL DEFAULT 'vip_2',
+  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
+  "expiresAt" TIMESTAMPTZ,
+  "isUsed" BOOLEAN DEFAULT FALSE,
+  "createdBy" UUID,
+  "usedBy" UUID
+);
+
+-- 5. Profiles Table (Supports custom role names as TEXT)
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
@@ -79,13 +90,14 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles ALTER COLUMN role TYPE TEXT USING role::text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW();
 
--- 5. Tickets Table (Enterprise Box-Office Schema)
+-- 6. Tickets Table (Enterprise Box-Office Schema with Guest Name Support)
 CREATE TABLE public.tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_code TEXT NOT NULL UNIQUE,
   owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   tier public.ticket_tier NOT NULL DEFAULT 'general'::public.ticket_tier,
   parent_ticket_id UUID REFERENCES public.tickets(id) ON DELETE SET NULL,
+  guest_name TEXT,
   is_manual BOOLEAN NOT NULL DEFAULT FALSE,
   created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'valid' CHECK (status IN ('valid', 'used', 'revoked')),
@@ -95,6 +107,8 @@ CREATE TABLE public.tickets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS guest_name TEXT;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_tickets_ticket_code ON public.tickets (ticket_code);
@@ -108,11 +122,20 @@ ALTER TABLE public.gates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.custom_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vip_invitations ENABLE ROW LEVEL SECURITY;
 
 -- Custom Roles RLS Policies
 DROP POLICY IF EXISTS "Allow ALL custom_roles" ON public.custom_roles;
 CREATE POLICY "Allow ALL custom_roles"
   ON public.custom_roles FOR ALL
+  TO authenticated, anon
+  USING (true)
+  WITH CHECK (true);
+
+-- VIP Invitations RLS Policies
+DROP POLICY IF EXISTS "Allow ALL vip_invitations" ON public.vip_invitations;
+CREATE POLICY "Allow ALL vip_invitations"
+  ON public.vip_invitations FOR ALL
   TO authenticated, anon
   USING (true)
   WITH CHECK (true);
@@ -141,7 +164,7 @@ CREATE POLICY "Allow ALL tickets"
   USING (true)
   WITH CHECK (true);
 
--- 6. Trigger on auth.users -> public.profiles
+-- 7. Trigger on auth.users -> public.profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -187,7 +210,7 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 7. SECURITY DEFINER Stored Procedure to Purge Admin Passes
+-- 8. SECURITY DEFINER Stored Procedure to Purge Admin Passes
 CREATE OR REPLACE FUNCTION public.purge_admin_tickets()
 RETURNS VOID
 LANGUAGE plpgsql
@@ -203,7 +226,7 @@ BEGIN
 END;
 $$;
 
--- 8. Atomic Checkin PL/pgSQL RPC Stored Procedure
+-- 9. Atomic Checkin PL/pgSQL RPC Stored Procedure
 CREATE OR REPLACE FUNCTION public.atomic_checkin(
   p_ticket_code TEXT,
   p_gate_id UUID
@@ -283,7 +306,7 @@ BEGIN
 END;
 $$;
 
--- 9. Sync Scan Event RPC
+-- 10. Sync Scan Event RPC
 CREATE OR REPLACE FUNCTION public.sync_scan_event(
   p_operation_id TEXT,
   p_ticket_id TEXT,

@@ -1,6 +1,19 @@
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
+// Fix undici/jsdom compatibility in CI environments
+if (typeof globalThis !== 'undefined') {
+  try {
+    // Provide polyfill for markAsUncloneable if missing in undici
+    const globalWebidl = globalThis.webidl || {};
+    if (!globalWebidl.util) globalWebidl.util = {};
+    if (!globalWebidl.util.markAsUncloneable) {
+      globalWebidl.util.markAsUncloneable = () => {};
+    }
+    globalThis.webidl = globalWebidl;
+  } catch (e) {}
+}
+
 // Mock Supabase
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({

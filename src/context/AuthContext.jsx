@@ -210,6 +210,19 @@ export function AuthProvider({ children }) {
           }
         }
 
+        // Check if there is an active VIP invitation parameter in URL
+        if (typeof window !== 'undefined') {
+          const urlParams = new URLSearchParams(window.location.search);
+          const inviteId = urlParams.get('invite');
+          if (inviteId) {
+            try {
+              await ensureUserTicket(user, profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0], 'general', inviteId);
+            } catch (e) {
+              console.warn('VIP invite processing warning:', e);
+            }
+          }
+        }
+
         // Realtime channels
         if (profileChannel) supabase.removeChannel(profileChannel);
         profileChannel = supabase
@@ -270,7 +283,35 @@ export function AuthProvider({ children }) {
       const dbUser = user || currentUser;
       if (!dbUser) throw new Error('No active user session');
 
-      // Safe check using array query rather than maybeSingle to avoid PGRST116
+      // Check if invitationId exists in URL parameters if not passed explicitly
+      let targetInviteId = invitationId;
+      if (!targetInviteId && typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        targetInviteId = urlParams.get('invite');
+      }
+
+      let activeTier = tier || 'general';
+
+      if (targetInviteId) {
+        const { data: invite } = await supabase
+          .from('vip_invitations')
+          .select('*')
+          .eq('id', targetInviteId)
+          .maybeSingle();
+
+        if (invite && (!invite.isUsed || invite.usedBy === dbUser.id)) {
+          activeTier = invite.tier || 'vip_2';
+          await supabase
+            .from('vip_invitations')
+            .update({ isUsed: true, usedBy: dbUser.id })
+            .eq('id', targetInviteId);
+        }
+      }
+
+      const normalizedTier = activeTier.toLowerCase().includes('vip') ?
+        (activeTier === 'VIP_SILVER' ? 'vip_1' : activeTier === 'VIP_GOLD' ? 'vip_2' : activeTier === 'VIP_PLATINUM' ? 'vip_3' : activeTier.toLowerCase()) : 'general';
+
+      // Safe check using array query
       const { data: existingTickets } = await supabase
         .from('tickets')
         .select('*')
@@ -278,20 +319,56 @@ export function AuthProvider({ children }) {
         .is('parent_ticket_id', null)
         .order('created_at', { ascending: false });
 
-      if (existingTickets && existingTickets.length > 0) {
-        setUserTicket(existingTickets[0]);
+      let currentTicket = (existingTickets && existingTickets.length > 0) ? existingTickets[0] : null;
 
-        if (userRole === 'user') {
-          await supabase.from('profiles').update({ role: 'attendee' }).eq('id', dbUser.id);
-          setUserRole('attendee');
+      if (currentTicket) {
+        // Upgrade general ticket to VIP if VIP invitation link processed
+        if (normalizedTier.startsWith('vip') && currentTicket.tier !== normalizedTier) {
+          const { data: upgraded } = await supabase
+            .from('tickets')
+            .update({ tier: normalizedTier })
+            .eq('id', currentTicket.id)
+            .select('*')
+            .single();
+
+          if (upgraded) currentTicket = upgraded;
+          await supabase.from('profiles').update({ role: normalizedTier }).eq('id', dbUser.id);
+          setUserRole(normalizedTier);
         }
 
-        return existingTickets[0];
+        setUserTicket(currentTicket);
+
+        // Generate VIP guest tickets if VIP tier and guest tickets not generated yet
+        const plusOnes = VIP_PLUS_ONES[normalizedTier] || 0;
+        if (plusOnes > 0 && currentTicket) {
+          const { data: existingGuests } = await supabase
+            .from('tickets')
+            .select('*')
+            .eq('parent_ticket_id', currentTicket.id);
+
+          if (!existingGuests || existingGuests.length < plusOnes) {
+            const guestTickets = [];
+            const startNum = existingGuests ? existingGuests.length + 1 : 1;
+            for (let i = startNum; i <= plusOnes; i++) {
+              guestTickets.push({
+                ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
+                owner_id: dbUser.id,
+                tier: normalizedTier,
+                parent_ticket_id: currentTicket.id,
+                guest_name: `Guest #${i}`,
+                is_manual: false,
+                created_by: dbUser.id,
+                status: 'valid'
+              });
+            }
+            await supabase.from('tickets').insert(guestTickets);
+          }
+        }
+
+        return currentTicket;
       }
 
-      const normalizedTier = (tier || 'general').toLowerCase().includes('vip') ?
-        (tier === 'VIP_SILVER' ? 'vip_1' : tier === 'VIP_GOLD' ? 'vip_2' : tier === 'VIP_PLATINUM' ? 'vip_3' : tier.toLowerCase()) : 'general';
-
+      // Create new ticket if no ticket exists
       const ticketCode = generateTicketCode(normalizedTier);
 
       const newTicket = {
@@ -311,43 +388,30 @@ export function AuthProvider({ children }) {
 
       if (insertErr) throw insertErr;
 
-      // Update role to attendee in profiles table if regular user
-      const isStaffOrAdmin = ['admin', 'executive_admin', 'gatekeeper', 'security', 'team_member'].includes(userRole);
-      if (!isStaffOrAdmin) {
-        await supabase
-          .from('profiles')
-          .update({ role: 'attendee' })
-          .eq('id', dbUser.id);
-
-        setUserRole('attendee');
-      }
+      const roleToSet = normalizedTier.startsWith('vip') ? normalizedTier : 'attendee';
+      await supabase.from('profiles').update({ role: roleToSet }).eq('id', dbUser.id);
+      setUserRole(roleToSet);
 
       setUserTicket(insertedTicket);
       setIsNewRegistration(true);
 
-      // Generate VIP guest tickets if VIP tier
+      // Generate VIP guest tickets
       const plusOnes = VIP_PLUS_ONES[normalizedTier] || 0;
       if (plusOnes > 0 && insertedTicket) {
-        const { data: existingGuests } = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('parent_ticket_id', insertedTicket.id);
-
-        if (!existingGuests || existingGuests.length === 0) {
-          const guestTickets = [];
-          for (let i = 1; i <= plusOnes; i++) {
-            guestTickets.push({
-              ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
-              owner_id: dbUser.id,
-              tier: normalizedTier,
-              parent_ticket_id: insertedTicket.id,
-              is_manual: false,
-              created_by: dbUser.id,
-              status: 'valid'
-            });
-          }
-          await supabase.from('tickets').insert(guestTickets);
+        const guestTickets = [];
+        for (let i = 1; i <= plusOnes; i++) {
+          guestTickets.push({
+            ticket_code: generateTicketCode(normalizedTier) + `-G${i}`,
+            owner_id: dbUser.id,
+            tier: normalizedTier,
+            parent_ticket_id: insertedTicket.id,
+            guest_name: `Guest #${i}`,
+            is_manual: false,
+            created_by: dbUser.id,
+            status: 'valid'
+          });
         }
+        await supabase.from('tickets').insert(guestTickets);
       }
 
       return insertedTicket;
@@ -438,7 +502,6 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     const user = data.user;
     if (user) {
-      // Auto-ensure ticket if regular user
       try {
         const roleLower = user.email === 'admin@livestockcarnival.ng' || user.email === 'admin@gcc.com' ? 'admin' : 'user';
         if (roleLower === 'user') {

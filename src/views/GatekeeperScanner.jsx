@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { soundFX } from '../utils/audio';
-import { TIER_WRISTBANDS, generateTicketCode, useAuth } from '../context/AuthContext';
+import { TIER_WRISTBANDS, TIER_LABELS, generateTicketCode, useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import StaffLogin from '../components/StaffLogin';
 import PinLock from '../components/PinLock';
@@ -30,7 +30,11 @@ import {
   ChevronLeft,
   ChevronRight,
   MapPin,
-  ClipboardList
+  ClipboardList,
+  Crown,
+  UserCheck,
+  Plus,
+  Check
 } from 'lucide-react';
 
 import { executeAtomicCheckIn } from '../utils/atomic-checkin';
@@ -39,7 +43,7 @@ export default function GatekeeperScanner() {
   const { currentUser, userProfile, userRole, assignedGate } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(true);
-  const [hasPin, setHasPin] = useState(!!localStorage.getItem('gcc_gate_pin_hash'));
+  const [hasPin, setHasPin] = useState(!!localStorage.getItem('gcc.gate_pin_hash'));
 
   // Gate State
   const [gates, setGates] = useState([]);
@@ -52,6 +56,11 @@ export default function GatekeeperScanner() {
   const [scannedResult, setScannedResult] = useState(null);
   const [manualCode, setManualCode] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // VIP Manifest Modal State
+  const [vipManifestData, setVipManifestData] = useState(null);
+  const [extraGuestName, setExtraGuestName] = useState('');
+  const [isAdmittingGuest, setIsAdmittingGuest] = useState(false);
 
   // Box-Office Manual Creation Flow
   const [showManualModal, setShowManualModal] = useState(false);
@@ -126,7 +135,6 @@ export default function GatekeeperScanner() {
 
     fetchScans();
 
-    // Subscribe to changes
     const channel = supabase
       .channel(`scans_by_${currentUser.id}`)
       .on(
@@ -140,6 +148,93 @@ export default function GatekeeperScanner() {
       supabase.removeChannel(channel);
     };
   }, [currentUser, scanPage]);
+
+  const fetchVipManifest = async (ticket) => {
+    try {
+      const parentId = ticket.parent_ticket_id || ticket.id;
+
+      // Fetch primary host ticket and owner profile
+      const { data: primaryTicket } = await supabase
+        .from('tickets')
+        .select('*, profiles(*)')
+        .eq('id', parentId)
+        .single();
+
+      // Fetch all child guest tickets
+      const { data: guestTickets } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('parent_ticket_id', parentId)
+        .order('created_at', { ascending: true });
+
+      if (primaryTicket) {
+        setVipManifestData({
+          primaryTicket,
+          hostName: primaryTicket.profiles?.full_name || primaryTicket.profiles?.email || 'VIP Delegate',
+          guestTickets: guestTickets || []
+        });
+      }
+    } catch (e) {
+      console.warn('VIP Manifest fetch error:', e);
+    }
+  };
+
+  const handleAdmitVipGuest = async (guestTicket) => {
+    setIsAdmittingGuest(true);
+    try {
+      const result = await executeAtomicCheckIn(guestTicket.ticket_code, selectedGateId);
+
+      if (result?.success || result?.status === 'VALID') {
+        soundFX.playSuccessChime();
+        soundFX.triggerSuccessHaptic();
+      }
+
+      // Re-fetch manifest
+      await fetchVipManifest(vipManifestData.primaryTicket);
+    } catch (err) {
+      alert('Failed to admit guest: ' + err.message);
+    } finally {
+      setIsAdmittingGuest(false);
+    }
+  };
+
+  const handleAddExtraVipGuestOnSpot = async (e) => {
+    e.preventDefault();
+    if (!extraGuestName.trim() || !vipManifestData?.primaryTicket) return;
+    setIsAdmittingGuest(true);
+
+    try {
+      const tier = vipManifestData.primaryTicket.tier;
+      const code = generateTicketCode(tier) + `-GEX`;
+
+      const { data: newGuestTicket, error } = await supabase
+        .from('tickets')
+        .insert({
+          ticket_code: code,
+          owner_id: vipManifestData.primaryTicket.owner_id,
+          parent_ticket_id: vipManifestData.primaryTicket.id,
+          tier: tier,
+          guest_name: extraGuestName.trim(),
+          is_manual: true,
+          created_by: currentUser.id,
+          status: 'valid'
+        })
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      await executeAtomicCheckIn(code, selectedGateId);
+      soundFX.playSuccessChime();
+
+      setExtraGuestName('');
+      await fetchVipManifest(vipManifestData.primaryTicket);
+    } catch (err) {
+      alert('Failed to add extra guest: ' + err.message);
+    } finally {
+      setIsAdmittingGuest(false);
+    }
+  };
 
   const handleSetPin = (hash) => {
     localStorage.setItem('gcc_gate_pin_hash', hash);
@@ -165,6 +260,11 @@ export default function GatekeeperScanner() {
       }
 
       setScannedResult(result);
+
+      // If scanned ticket is a VIP pass, trigger VIP Manifest popup
+      if (result?.data && (result.data.tier || '').toLowerCase().startsWith('vip')) {
+        await fetchVipManifest(result.data);
+      }
     } catch (err) {
       console.error('Scanner error:', err);
       setScannedResult({ status: 'INVALID', message: 'SYSTEM ERROR' });
@@ -182,7 +282,6 @@ export default function GatekeeperScanner() {
     try {
       const code = generateTicketCode(manualTier);
 
-      // Create manual ticket flagged with is_manual = true
       const { data: newTicket, error } = await supabase
         .from('tickets')
         .insert({
@@ -197,7 +296,6 @@ export default function GatekeeperScanner() {
 
       if (error) throw error;
 
-      // Automatically execute atomic check-in
       const checkinRes = await executeAtomicCheckIn(code, selectedGateId);
 
       if (checkinRes?.success || checkinRes?.status === 'VALID') {
@@ -393,6 +491,94 @@ export default function GatekeeperScanner() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* VIP GUEST MANIFEST GATE ADMITTANCE PANEL */}
+      {vipManifestData && (
+        <div className="bg-slate-900 rounded-3xl p-6 text-white space-y-4 border border-slate-800 shadow-2xl animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Crown className="w-5 h-5 text-amber-400" />
+              <div>
+                <h3 className="text-sm font-black uppercase text-white">
+                  VIP Host: {vipManifestData.hostName}
+                </h3>
+                <span className="text-[10px] text-amber-400 font-extrabold uppercase">
+                  {TIER_LABELS[vipManifestData.primaryTicket.tier] || 'VIP Pass'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setVipManifestData(null)}
+              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+              Enrolled Plus-One Guests ({vipManifestData.guestTickets.length} Guests)
+            </span>
+
+            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+              {vipManifestData.guestTickets.length === 0 ? (
+                <p className="text-xs text-slate-500 italic p-3">No plus-one guests enrolled yet.</p>
+              ) : (
+                vipManifestData.guestTickets.map((g, idx) => {
+                  const isAdmitted = g.status === 'used';
+                  return (
+                    <div key={g.id} className="p-3 bg-slate-800/80 rounded-2xl flex items-center justify-between gap-3 border border-slate-700/50">
+                      <div>
+                        <span className="font-extrabold text-xs text-white block">
+                          {g.guest_name || `VIP Guest #${idx + 1}`}
+                        </span>
+                        <span className="font-mono text-[9px] text-slate-400">
+                          {g.ticket_code}
+                        </span>
+                      </div>
+
+                      {isAdmitted ? (
+                        <div className="flex items-center gap-1 bg-emerald-950 text-emerald-400 px-3 py-1 rounded-xl text-[9px] font-black uppercase border border-emerald-800">
+                          <Check className="w-3 h-3" />
+                          Admitted
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleAdmitVipGuest(g)}
+                          disabled={isAdmittingGuest}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase transition-all shadow-md cursor-pointer disabled:opacity-50"
+                        >
+                          Admit & Issue Wristband
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* On-the-spot Extra Guest Admittance */}
+          <form onSubmit={handleAddExtraVipGuestOnSpot} className="pt-2 border-t border-slate-800 flex gap-2">
+            <input
+              type="text"
+              placeholder="Admit walk-in guest name..."
+              value={extraGuestName}
+              onChange={(e) => setExtraGuestName(e.target.value)}
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none"
+            />
+            <button
+              type="submit"
+              disabled={isAdmittingGuest || !extraGuestName.trim()}
+              className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Admit
+            </button>
+          </form>
         </div>
       )}
 
