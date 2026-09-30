@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth, TIER_WRISTBANDS, TIER_LABELS, VIP_PLUS_ONES, generateTicketCode } from '../context/AuthContext';
+import { sanitizeText } from '../utils/sanitizer';
+import { checkRateLimit } from '../utils/rate-limiter';
 import StaffLogin from '../components/StaffLogin';
 import ScrollReveal from '../components/ScrollReveal';
 import Button from '../components/ui/Button';
@@ -396,9 +398,10 @@ export default function AdminCommandConsole({ onNavigate }) {
     e.preventDefault();
 
     try {
-      const email = manualUserEmail.trim() ? manualUserEmail.trim().toLowerCase() : `manual-${Date.now()}-${Math.random().toString(36).substring(2,6)}@livestockcarnival.ng`;
-      const fullName = manualUserFullName.trim() || 'Manual Attendee';
-      const role = manualUserRole.toLowerCase();
+      checkRateLimit('admin:create_user', 10, 60000);
+      const email = manualUserEmail.trim() ? sanitizeText(manualUserEmail.trim().toLowerCase()) : `manual-${Date.now()}-${Math.random().toString(36).substring(2,6)}@livestockcarnival.ng`;
+      const fullName = sanitizeText(manualUserFullName.trim()) || 'Manual Attendee';
+      const role = sanitizeText(manualUserRole.toLowerCase());
 
       const { data: existingProfile } = await supabase
         .from('profiles')

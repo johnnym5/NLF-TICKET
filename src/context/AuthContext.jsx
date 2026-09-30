@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { sanitizeText } from '../utils/sanitizer';
+import { checkRateLimit } from '../utils/rate-limiter';
 
 const AuthContext = createContext();
 
@@ -420,6 +422,7 @@ export function AuthProvider({ children }) {
   };
 
   const signInWithGoogle = async (invitationId = null) => {
+    checkRateLimit('auth:google', 5, 60000);
     const callbackUrl = `${import.meta.env.VITE_APP_URL || window.location.origin}`;
 
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -473,12 +476,16 @@ export function AuthProvider({ children }) {
   };
 
   const registerWithEmail = async (email, password, fullName, invitationId = null) => {
+    checkRateLimit('auth:register', 5, 60000);
+    const cleanEmail = sanitizeText(email).toLowerCase();
+    const cleanName = sanitizeText(fullName);
+
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
         data: {
-          full_name: fullName
+          full_name: cleanName
         }
       }
     });
@@ -486,14 +493,17 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     const user = data.user;
     if (user) {
-      await ensureUserTicket(user, fullName, 'general', invitationId);
+      await ensureUserTicket(user, cleanName, 'general', invitationId);
     }
     return user;
   };
 
   const loginWithEmail = async (email, password) => {
+    checkRateLimit('auth:login', 5, 60000);
+    const cleanEmail = sanitizeText(email).toLowerCase();
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: cleanEmail,
       password
     });
 

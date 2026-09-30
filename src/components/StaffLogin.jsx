@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase';
 import { Lock, Mail, KeyRound, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
 import Button from './ui/Button';
 import Input from './ui/Input';
+import { sanitizeText } from '../utils/sanitizer';
+import { checkRateLimit } from '../utils/rate-limiter';
 
 export default function StaffLogin({ title, subtitle, allowedEmails = [], onSuccess }) {
   const { loginWithEmail } = useAuth();
@@ -17,9 +19,9 @@ export default function StaffLogin({ title, subtitle, allowedEmails = [], onSucc
     setError('');
     setLoading(true);
 
-    const cleanEmail = email.trim().toLowerCase();
-
     try {
+      checkRateLimit('staff:login', 5, 60000);
+      const cleanEmail = sanitizeText(email).toLowerCase();
       let user = null;
 
       // 1. Attempt login

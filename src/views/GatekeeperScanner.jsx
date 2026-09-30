@@ -3,6 +3,8 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { soundFX } from '../utils/audio';
 import { TIER_WRISTBANDS, TIER_LABELS, generateTicketCode, useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { sanitizeText } from '../utils/sanitizer';
+import { checkRateLimit } from '../utils/rate-limiter';
 import StaffLogin from '../components/StaffLogin';
 import PinLock from '../components/PinLock';
 import ScrollReveal from '../components/ScrollReveal';
@@ -253,7 +255,8 @@ export default function GatekeeperScanner() {
   };
 
   const processTicketCode = async (rawCode) => {
-    const cleanCode = (rawCode || '').trim().toUpperCase();
+    checkRateLimit('scan:checkin', 10, 5000);
+    const cleanCode = sanitizeText(rawCode || '').trim().toUpperCase();
     if (!cleanCode || processingRef.current) return;
     processingRef.current = true;
     setIsProcessing(true);

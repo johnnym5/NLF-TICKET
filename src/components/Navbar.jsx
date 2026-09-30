@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { QrCode, ShieldCheck, BarChart3, LogOut, Info, User, Menu, X } from 'lucide-react';
+import { QrCode, ShieldCheck, BarChart3, LogOut, Info, User, Menu, X, Globe } from 'lucide-react';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
 
@@ -29,19 +29,32 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Brand */}
-          <div 
-            onClick={() => setCurrentRoute('landing')}
-            className="flex items-center gap-3 cursor-pointer group"
-          >
-            <img
-              src="/logo.jpeg"
-              alt="Livestock Carnival Logo"
-              className="w-10 h-10 rounded-lg object-cover shadow-sm transition-transform group-hover:scale-105 border border-emerald-900/10"
-            />
-            <div className="hidden sm:block">
-              <span className="font-black text-sm text-slate-900 uppercase tracking-tighter">Festival 2026</span>
-              <p className="text-[9px] font-black text-amber-600 uppercase tracking-[0.2em] -mt-0.5">Abuja Carnival</p>
+          {/* Top Left: Main Site Link & Brand Logo */}
+          <div className="flex items-center gap-2.5">
+            <a
+              href="https://livestockcarnival.ng"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-[#0F4A2F] hover:text-white text-slate-700 text-[10px] font-black uppercase tracking-wider transition-all border border-slate-200 shrink-0 group/site shadow-2xs"
+              title="Return to Main Website"
+            >
+              <Globe className="w-3.5 h-3.5 text-sage-deep group-hover/site:text-emerald-300" />
+              <span>Main Site</span>
+            </a>
+
+            <div className="h-5 w-[1px] bg-slate-200 hidden sm:block" />
+
+            <div
+              onClick={() => setCurrentRoute('landing')}
+              className="flex items-center gap-2.5 cursor-pointer group"
+            >
+              <img
+                src="/logo.jpeg"
+                alt="Livestock Carnival Logo"
+                className="w-10 h-10 rounded-lg object-cover shadow-sm transition-transform group-hover:scale-105 border border-emerald-900/10"
+              />
+              <div className="hidden sm:block">
+                <span className="font-black text-sm text-slate-900 uppercase tracking-tighter">Festival 2026</span>
+                <p className="text-[9px] font-black text-amber-600 uppercase tracking-[0.2em] -mt-0.5">Abuja Carnival</p>
+              </div>
             </div>
           </div>
 
