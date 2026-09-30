@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { X, MapPin, Clock, CheckCircle2, Sparkles, Trophy, Utensils, Music } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, MapPin, Clock, CheckCircle2, Trophy, Utensils, Music } from 'lucide-react';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
 import AutoImageCarousel from './AutoImageCarousel';
@@ -11,6 +11,16 @@ const iconMap = {
 };
 
 export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
+  const [isClosing, setIsClosing] = useState(false);
+
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setIsClosing(false);
+      onClose();
+    }, 450);
+  };
+
   // Body scroll lock
   useEffect(() => {
     if (isOpen) {
@@ -26,45 +36,48 @@ export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
   // Keyboard Escape listener
   useEffect(() => {
     const handleEsc = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') handleClose();
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose]);
+  }, []);
 
-  if (!isOpen || !experience) return null;
+  if ((!isOpen && !isClosing) || !experience) return null;
 
   const Icon = iconMap[experience.icon] || Trophy;
   const carouselImages = experience.images || [experience.coverImage, ...(experience.gallery || [])];
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/70 backdrop-blur-md animate-fadeIn"
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/70 backdrop-blur-md transition-all duration-500 ease-in-out ${
+        isClosing ? 'opacity-0' : 'opacity-100'
+      }`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
-      onClick={onClose}
+      onClick={handleClose}
     >
       <div
-        className="relative w-full max-w-4xl max-h-[92vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row border border-slate-200"
+        className={`relative w-full max-w-4xl max-h-[92vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row border border-slate-200 transition-all duration-500 ease-in-out ${
+          isClosing ? 'scale-90 opacity-0 translate-y-6' : 'scale-100 opacity-100 translate-y-0'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Mobile Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-4 right-4 z-50 p-2.5 bg-slate-900/80 text-white backdrop-blur-md rounded-full shadow-lg md:hidden"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* Visual Content Section with Auto 7s Ken Burns Zoom Carousel */}
+        {/* Visual Content Section */}
         <div className="w-full md:w-1/2 p-4 md:p-6 bg-slate-950 flex flex-col justify-between shrink-0">
           <div className="space-y-3 mb-3">
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-900 font-black text-[10px] uppercase tracking-widest">
                 Official Live Experience
               </span>
-              <span className="text-[10px] font-bold text-slate-400">7s Ken Burns Zoom</span>
             </div>
           </div>
 
@@ -96,7 +109,7 @@ export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
               </h2>
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="hidden md:flex p-2.5 hover:bg-slate-100 rounded-full transition-colors shrink-0"
             >
               <X className="w-5 h-5 text-slate-400" />
@@ -129,8 +142,7 @@ export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
             {/* Live Activities Happening at Event */}
             {experience.details.activities && experience.details.activities.length > 0 && (
               <div className="space-y-3 pt-2">
-                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0F4A2F] flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0F4A2F]">
                   Live Event Activities
                 </h4>
                 <div className="space-y-2 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
@@ -147,7 +159,7 @@ export default function ExperienceDetailModal({ experience, isOpen, onClose }) {
 
           {/* Sticky Footer */}
           <div className="p-6 bg-slate-50 border-t border-slate-100 mt-auto shrink-0">
-            <Button className="w-full py-3.5 text-sm" onClick={onClose}>
+            <Button className="w-full py-3.5 text-sm" onClick={handleClose}>
               Close & Continue
             </Button>
           </div>

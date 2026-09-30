@@ -1,38 +1,50 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   Info,
   Calendar,
   MapPin,
   Ticket,
-  ShieldCheck,
   Star,
   Users,
   Utensils,
   Music,
   Gamepad2,
   ShoppingBag,
-  ChevronRight,
-  Sparkles
+  ChevronRight
 } from 'lucide-react';
 
 export default function FestivalInfoModal({ isOpen, onClose, onRegister, onOpenSchedule }) {
-  if (!isOpen) return null;
+  const [isClosing, setIsClosing] = useState(false);
+
+  if (!isOpen && !isClosing) return null;
+
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setIsClosing(false);
+      onClose();
+    }, 450);
+  };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/40 backdrop-blur-sm animate-fadeIn transition-opacity duration-300"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/50 backdrop-blur-sm transition-all duration-500 ease-in-out ${
+        isClosing ? 'opacity-0' : 'opacity-100'
+      }`}
+      onClick={handleClose}
     >
       <div
-        className="relative w-full max-w-2xl bg-[#FBFBFA] rounded-3xl shadow-elevated overflow-hidden max-h-[90vh] flex flex-col animate-scaleIn"
+        className={`relative w-full max-w-2xl bg-[#FBFBFA] rounded-3xl shadow-elevated overflow-hidden max-h-[90vh] flex flex-col border border-slate-200 transition-all duration-500 ease-in-out ${
+          isClosing ? 'scale-90 opacity-0 translate-y-6' : 'scale-100 opacity-100 translate-y-0'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
         <div className="relative p-6 sm:p-8 border-b border-slate-100 flex-shrink-0">
           <button
-            onClick={onClose}
-            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            onClick={handleClose}
+            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -59,7 +71,10 @@ export default function FestivalInfoModal({ isOpen, onClose, onRegister, onOpenS
           {/* Quick Metadata Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div
-              onClick={() => { if (onOpenSchedule) onOpenSchedule(); }}
+              onClick={() => {
+                handleClose();
+                if (onOpenSchedule) setTimeout(onOpenSchedule, 450);
+              }}
               className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-slate-100 shadow-sm hover:border-[#B8D8C5] transition-all cursor-pointer group"
             >
               <div className="w-8 h-8 rounded-xl bg-[#EBF3EE] flex items-center justify-center text-[#0F4A2F] group-hover:bg-[#0F4A2F] group-hover:text-white transition-colors">
@@ -219,17 +234,17 @@ export default function FestivalInfoModal({ isOpen, onClose, onRegister, onOpenS
         {/* Modal Footer */}
         <div className="p-6 sm:p-8 bg-white border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0">
           <button
-            onClick={onClose}
-            className="w-full sm:w-auto px-6 py-3 rounded-2xl text-slate-500 font-bold text-sm hover:bg-slate-50 transition-colors"
+            onClick={handleClose}
+            className="w-full sm:w-auto px-6 py-3 rounded-2xl text-slate-500 font-bold text-sm hover:bg-slate-50 transition-colors cursor-pointer"
           >
             Close
           </button>
           <button
             onClick={() => {
-              onClose();
-              if (onRegister) onRegister();
+              handleClose();
+              if (onRegister) setTimeout(onRegister, 450);
             }}
-            className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-[#0F4A2F] text-white font-black text-sm shadow-card hover:bg-emerald-950 transition-all flex items-center justify-center gap-2 active:scale-95"
+            className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-[#0F4A2F] text-white font-black text-sm shadow-card hover:bg-emerald-950 transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
           >
             <span>Get Free Entry Pass</span>
             <ChevronRight className="w-4 h-4" />

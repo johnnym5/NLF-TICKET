@@ -78,11 +78,11 @@ export default function AuthModal({ isOpen, onClose, vipTier = 'REGULAR', invita
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all duration-300 ${isClosing ? 'opacity-0' : 'opacity-100'}`}
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all duration-500 ease-in-out ${isClosing ? 'opacity-0' : 'opacity-100'}`}
       onClick={handleClose}
     >
       <div 
-        className={`relative w-full max-w-[420px] bg-white rounded-2xl shadow-premium overflow-hidden transition-all duration-500 ${isClosing ? 'translate-y-8 opacity-0 scale-95' : 'translate-y-0 opacity-100 scale-100'}`}
+        className={`relative w-full max-w-[420px] bg-white rounded-2xl shadow-premium overflow-hidden transition-all duration-500 ease-in-out ${isClosing ? 'translate-y-4 opacity-0 scale-90' : 'translate-y-0 opacity-100 scale-100'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Section */}

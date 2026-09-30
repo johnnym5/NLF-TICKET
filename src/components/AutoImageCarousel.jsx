@@ -117,7 +117,7 @@ export default function AutoImageCarousel({ images = [], alt = 'Carnival Image',
           </div>
 
           <span className="text-[10px] font-mono font-bold text-white/80 bg-black/40 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/20">
-            {currentIndex + 1} / {images.length} • 7s Timer
+            {currentIndex + 1} / {images.length}
           </span>
         </div>
       )}

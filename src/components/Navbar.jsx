@@ -37,7 +37,7 @@ export default function Navbar({ currentRoute, setCurrentRoute, onOpenAuth }) {
               title="Return to Main Website"
             >
               <Globe className="w-3.5 h-3.5 text-sage-deep group-hover/site:text-emerald-300" />
-              <span>Main Site</span>
+              <span>Carnival</span>
             </a>
 
             <div className="h-5 w-[1px] bg-slate-200 hidden sm:block" />

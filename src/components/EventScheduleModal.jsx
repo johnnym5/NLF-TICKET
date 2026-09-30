@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Calendar, MapPin, Clock, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { X, Calendar, MapPin, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export const SCHEDULE_DAYS = [
   {
@@ -122,10 +122,19 @@ const trackColorMap = {
 
 export default function EventScheduleModal({ isOpen, onClose }) {
   const [activeSlide, setActiveSlide] = useState(0);
+  const [isClosing, setIsClosing] = useState(false);
 
-  if (!isOpen) return null;
+  if (!isOpen && !isClosing) return null;
 
   const currentDay = SCHEDULE_DAYS[activeSlide];
+
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setIsClosing(false);
+      onClose();
+    }, 450);
+  };
 
   const handlePrev = () => {
     setActiveSlide((prev) => (prev > 0 ? prev - 1 : SCHEDULE_DAYS.length - 1));
@@ -137,11 +146,15 @@ export default function EventScheduleModal({ isOpen, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/70 backdrop-blur-md transition-all animate-fadeIn"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/70 backdrop-blur-md transition-all duration-500 ease-in-out ${
+        isClosing ? 'opacity-0' : 'opacity-100'
+      }`}
+      onClick={handleClose}
     >
       <div
-        className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200"
+        className={`relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200 transition-all duration-500 ease-in-out ${
+          isClosing ? 'scale-90 opacity-0 translate-y-6' : 'scale-100 opacity-100 translate-y-0'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Bar */}
@@ -158,7 +171,7 @@ export default function EventScheduleModal({ isOpen, onClose }) {
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -284,7 +297,7 @@ export default function EventScheduleModal({ isOpen, onClose }) {
               Click arrows or tabs to view Day 1, 2, or 3
             </span>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
             >
               Close Schedule
