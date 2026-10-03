@@ -140,6 +140,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [isRegistrationCalendarOpen, setIsRegistrationCalendarOpen] = useState(false);
+  const [isRolesPanelOpen, setIsRolesPanelOpen] = useState(false);
   const [selectedRegistrationDate, setSelectedRegistrationDate] = useState('');
   const [registrationPageSize, setRegistrationPageSize] = useState(10);
   const [registrationPage, setRegistrationPage] = useState(1);
@@ -968,6 +969,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   }, [tickets, profiles]);
 
   const calendarDays = useMemo(() => {
+    if (!(calendarMonth instanceof Date) || Number.isNaN(calendarMonth.getTime())) return [];
     const year = calendarMonth.getFullYear();
     const month = calendarMonth.getMonth();
     const firstWeekday = new Date(year, month, 1).getDay();
@@ -1067,69 +1069,6 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-
-      {/* VIP Link Dispatcher & Timeframe Filters */}
-      <div className="space-y-6">
-        {/* VIP Invitation Link Generator */}
-        <div className="bg-white rounded-3xl border border-champagne-border p-6 shadow-sm bg-gradient-to-r from-white via-champagne-light/20 to-white">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <Crown className="w-5 h-5 text-champagne-text" />
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">VIP Link Dispatcher</h3>
-              </div>
-              <p className="text-[10px] text-slate-500 font-medium">Generate a temporary (15 min) one-time invitation link for executive delegates (+10, +15, +20 guest passes).</p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
-                {[
-                  { id: 'vip_1', label: 'VIP 1 (+10)' },
-                  { id: 'vip_2', label: 'VIP 2 (+15)' },
-                  { id: 'vip_3', label: 'VIP 3 (+20)' }
-                ].map(tier => (
-                  <button
-                    key={tier.id}
-                    onClick={() => setSelectedVipTier(tier.id)}
-                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${selectedVipTier === tier.id ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    {tier.label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={handleGenerateVipLink}
-                disabled={isGenerating}
-                className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-              >
-                {isGenerating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
-                Generate VIP Link
-              </button>
-            </div>
-          </div>
-
-          {generatedVipUrl && (
-            <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-2xl animate-fadeIn space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 font-mono text-[10px] text-slate-500 truncate px-2">{generatedVipUrl}</div>
-                <button
-                  onClick={handleCopyVipLink}
-                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
-                >
-                  {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copiedLink ? 'Copied!' : 'Copy'}
-                </button>
-              </div>
-              <div className="flex items-center gap-2 px-2 border-t border-slate-200/50 pt-2">
-                <Clock className="w-3 h-3 text-rose-500" />
-                <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">Self-destructs in 15 minutes. Includes allotted guest passes.</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-      </div>
 
       {/* KPI Cards (Click to Filter / Toggle Tickets Section) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1548,7 +1487,69 @@ export default function AdminCommandConsole({ onNavigate }) {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+          {/* VIP Link Dispatcher */}
+      <div className="space-y-6">
+        {/* VIP Invitation Link Generator */}
+        <div className="bg-white rounded-3xl border border-champagne-border p-6 shadow-sm bg-gradient-to-r from-white via-champagne-light/20 to-white">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <Crown className="w-5 h-5 text-champagne-text" />
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">VIP Link Dispatcher</h3>
+              </div>
+              <p className="text-[10px] text-slate-500 font-medium">Generate a temporary (15 min) one-time invitation link for executive delegates (+10, +15, +20 guest passes).</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
+                {[
+                  { id: 'vip_1', label: 'VIP 1 (+10)' },
+                  { id: 'vip_2', label: 'VIP 2 (+15)' },
+                  { id: 'vip_3', label: 'VIP 3 (+20)' }
+                ].map(tier => (
+                  <button
+                    key={tier.id}
+                    onClick={() => setSelectedVipTier(tier.id)}
+                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${selectedVipTier === tier.id ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {tier.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={handleGenerateVipLink}
+                disabled={isGenerating}
+                className="px-4 py-2 bg-[#0F4A2F] text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-md hover:bg-emerald-950 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+              >
+                {isGenerating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
+                Generate VIP Link
+              </button>
+            </div>
+          </div>
+
+          {generatedVipUrl && (
+            <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-2xl animate-fadeIn space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 font-mono text-[10px] text-slate-500 truncate px-2">{generatedVipUrl}</div>
+                <button
+                  onClick={handleCopyVipLink}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer ${copiedLink ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+                >
+                  {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedLink ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 px-2 border-t border-slate-200/50 pt-2">
+                <Clock className="w-3 h-3 text-rose-500" />
+                <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">Self-destructs in 15 minutes. Includes allotted guest passes.</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
               <input aria-label="Select visible users" type="checkbox" checked={paginatedProfiles.length > 0 && paginatedProfiles.every(p => selectedProfileIds.includes(p.id))} onChange={e => setSelectedProfileIds(prev => e.target.checked ? [...new Set([...prev, ...paginatedProfiles.map(p => p.id)])] : prev.filter(id => !paginatedProfiles.some(p => p.id === id)))} />
               Select visible ({selectedProfileIds.length} selected)
