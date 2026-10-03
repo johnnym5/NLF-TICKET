@@ -178,12 +178,20 @@ export default function GatekeeperScanner() {
         .eq('parent_ticket_id', parentId)
         .order('created_at', { ascending: true });
 
+      const { data: guestCheckins } = await supabase
+        .from('tickets')
+        .select('id, scanned_at, scanned_by, gate_id_scanned_at, checked_in_under_ticket_id')
+        .eq('parent_ticket_id', parentId)
+        .eq('checked_in_under_ticket_id', parentId)
+        .order('scanned_at', { ascending: false });
+
       if (primaryTicket) {
         const hostName = ownerProfile?.full_name || primaryTicket.profiles?.full_name || primaryTicket.profiles?.email || 'VIP Delegate';
         setVipManifestData({
           primaryTicket,
           hostName,
-          guestTickets: guestTickets || []
+          guestTickets: guestTickets || [],
+          recentGuestCheckins: guestCheckins || []
         });
       }
     } catch (e) {
@@ -194,7 +202,7 @@ export default function GatekeeperScanner() {
   const handleAdmitVipGuest = async (guestTicket) => {
     setIsAdmittingGuest(true);
     try {
-      const result = await executeAtomicCheckIn(guestTicket.ticket_code, selectedGateId);
+      const result = await executeAtomicCheckIn(guestTicket.ticket_code, selectedGateId, vipManifestData.primaryTicket.id);
 
       if (result?.success || result?.status === 'VALID') {
         soundFX.playSuccessChime();
@@ -293,16 +301,17 @@ export default function GatekeeperScanner() {
         soundFX.triggerDuplicateHaptic();
       }
 
+      const isVipTicket = effectiveTier.startsWith('vip') || Boolean(result?.data?.parent_ticket_id);
+      if (isVipTicket && result?.data) {
+        await fetchVipManifest(result.data, ownerProfile);
+      }
+
       setScannedResult({
         ...result,
         attendeeName,
         effectiveTier
       });
 
-      // If scanned ticket is a VIP pass, trigger VIP Manifest popup
-      if (effectiveTier.startsWith('vip')) {
-        await fetchVipManifest(result.data, ownerProfile);
-      }
     } catch (err) {
       console.error('Scanner error:', err);
       setScannedResult({ status: 'INVALID', message: 'SYSTEM ERROR' });
@@ -603,9 +612,12 @@ export default function GatekeeperScanner() {
                         </div>
 
                         {isAdmitted ? (
+                          <div className="flex flex-col items-end gap-1">
                           <div className="flex items-center gap-1 bg-emerald-950 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border border-emerald-800 shrink-0">
                             <Check className="w-3.5 h-3.5" />
-                            Admitted
+                            {g.checked_in_under_ticket_id === vipManifestData.primaryTicket.id ? 'Admitted under host' : 'Already admitted'}
+                          </div>
+                            {g.scanned_at && <span className="text-[9px] text-slate-400">{new Date(g.scanned_at).toLocaleString()}</span>}
                           </div>
                         ) : (
                           <button

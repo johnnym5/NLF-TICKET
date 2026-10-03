@@ -303,7 +303,7 @@ export default function AdminCommandConsole({ onNavigate }) {
           .order('created_at', { ascending: true });
 
         const localGuests = tickets.filter(t => t.parent_ticket_id === primaryTicket.id);
-        const guestTickets = (fetchedGuests && fetchedGuests.length > 0) ? fetchedGuests : localGuests;
+        const guestTickets = fetchedGuests || localGuests;
 
         const effectiveTier = resolveEffectiveTier(primaryTicket.tier, profile.role);
         const defaultCount = VIP_PLUS_ONES[effectiveTier] || 10;
@@ -1881,9 +1881,10 @@ export default function AdminCommandConsole({ onNavigate }) {
                 {Array.from({ length: adminVipGuestModalData.slotCount }).map((_, idx) => {
                   const g = adminVipGuestModalData.guestTicketsMap[idx];
                   const passCode = g?.ticket_code || g?.ticketCode || (adminVipGuestModalData.primaryTicket?.ticket_code ? `${adminVipGuestModalData.primaryTicket.ticket_code}-G${idx + 1}` : `G${idx + 1}`);
+                  const checkedInUnderHost = g?.checked_in_under_ticket_id === adminVipGuestModalData.primaryTicket?.id;
 
                   return (
-                    <div key={idx} className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 space-y-1.5">
+                    <div key={idx} className={`p-2.5 rounded-2xl border space-y-1.5 ${checkedInUnderHost ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black text-slate-500 w-16 shrink-0 uppercase">
                           Guest #{idx + 1}:
@@ -1905,6 +1906,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                           {g?.status === 'used' || g?.status === 'CHECKED_IN' ? 'ADMITTED' : 'VALID'}
                         </Badge>
                       </div>
+                      {checkedInUnderHost && <div className="text-[9px] font-black uppercase text-emerald-800">Scanned under {adminVipGuestModalData.profile.full_name || 'VIP host'}{g?.scanned_at ? ` · ${new Date(g.scanned_at).toLocaleString()}` : ''}</div>}
 
                       {/* Display Pass Code & Unique Ticket ID */}
                       <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-200/60">
