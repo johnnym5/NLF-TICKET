@@ -139,6 +139,7 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [profilePageSize, setProfilePageSize] = useState(100);
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [isRegistrationCalendarOpen, setIsRegistrationCalendarOpen] = useState(false);
   const [selectedRegistrationDate, setSelectedRegistrationDate] = useState('');
   const [registrationPageSize, setRegistrationPageSize] = useState(10);
   const [registrationPage, setRegistrationPage] = useState(1);
@@ -1128,66 +1129,6 @@ export default function AdminCommandConsole({ onNavigate }) {
           )}
         </div>
 
-        {/* Daily / Weekly / Monthly Intake Counters & Calendar Filter */}
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-slate-100 shadow-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest mr-2 flex items-center gap-1.5">
-                <CalendarRange className="w-3.5 h-3.5" />
-                Ticket Ingestion Velocity:
-            </span>
-            <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase">
-              <span className="bg-emerald-50 text-emerald-800 px-3 py-1 rounded-xl border border-emerald-200">
-                Today: <strong className="text-slate-900">{stats.ticketsToday}</strong>
-              </span>
-              <span className="bg-blue-50 text-blue-800 px-3 py-1 rounded-xl border border-blue-200">
-                This Week: <strong className="text-slate-900">{stats.ticketsThisWeek}</strong>
-              </span>
-              <span className="bg-purple-50 text-purple-800 px-3 py-1 rounded-xl border border-purple-200">
-                This Month: <strong className="text-slate-900">{stats.ticketsThisMonth}</strong>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {[
-                { id: 'ALL', label: 'Lifetime' },
-                { id: 'TODAY', label: 'Today' },
-                { id: 'THIS_WEEK', label: 'Weekly' },
-                { id: 'THIS_MONTH', label: 'Monthly' }
-            ].map(btn => (
-                <button
-                    key={btn.id}
-                    onClick={() => { setRegTimeScope(btn.id); setSelectedCustomDate(''); }}
-                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border ${regTimeScope === btn.id ? 'bg-[#0F4A2F] text-white border-[#0F4A2F] shadow-sm' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'}`}
-                >
-                    {btn.label}
-                </button>
-            ))}
-
-            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
-                <button
-                    onClick={() => handleAdjustDate(-1)}
-                    className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                    title="Previous Day"
-                >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
-                <input
-                    type="date"
-                    value={selectedCustomDate}
-                    onChange={(e) => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); }}
-                    className="bg-transparent border-none text-[10px] font-bold text-slate-700 outline-none focus:ring-0 w-28"
-                />
-                <button
-                    onClick={() => handleAdjustDate(1)}
-                    className="p-1 text-slate-400 hover:text-[#0F4A2F] transition-colors"
-                    title="Next Day"
-                >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* KPI Cards (Click to Filter / Toggle Tickets Section) */}
@@ -1312,17 +1253,24 @@ export default function AdminCommandConsole({ onNavigate }) {
       </div>
 
       {/* REGISTRATION CALENDAR */}
-      <section className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-sm font-black uppercase text-slate-900">Registration Calendar</h2><p className="text-xs text-slate-500">Registrations by day. Select a date to view the registered users.</p></div>
+      <section className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <button type="button" onClick={() => setIsRegistrationCalendarOpen(open => !open)} aria-expanded={isRegistrationCalendarOpen} className="flex w-full flex-wrap items-center justify-between gap-3 p-5 text-left hover:bg-slate-50 sm:p-6">
+          <div><h2 className="text-sm font-black uppercase text-slate-900">Ticket Ingestion & Registration Calendar</h2><p className="text-xs text-slate-500">Today: {stats.ticketsToday} · This week: {stats.ticketsThisWeek} · This month: {stats.ticketsThisMonth} · Click to filter by period or inspect registration days.</p></div>
+          <div className="flex items-center gap-3"><span className="text-xs font-bold text-slate-500">{regTimeScope === 'ALL' ? 'Lifetime' : regTimeScope === 'CUSTOM' ? selectedCustomDate : regTimeScope.replace('THIS_', '')}</span>{isRegistrationCalendarOpen ? <ChevronDown className="h-5 w-5 rotate-180 text-slate-500" /> : <ChevronDown className="h-5 w-5 text-slate-500" />}</div>
+        </button>
+        {isRegistrationCalendarOpen && <div className="space-y-5 border-t border-slate-100 p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-sm font-black uppercase text-slate-900">Registration Calendar</h2><p className="text-xs text-slate-500">Select a period to filter tickets or select a day to view its registered users.</p></div>
+            <div className="flex flex-wrap items-center gap-2">{[{ id: 'ALL', label: 'Lifetime' }, { id: 'TODAY', label: 'Today' }, { id: 'THIS_WEEK', label: 'Weekly' }, { id: 'THIS_MONTH', label: 'Monthly' }].map(period => <button type="button" key={period.id} onClick={() => { setRegTimeScope(period.id); setSelectedCustomDate(''); setSelectedRegistrationDate(''); }} className={`rounded-xl border px-3 py-1.5 text-[9px] font-black uppercase ${regTimeScope === period.id ? 'border-[#0F4A2F] bg-[#0F4A2F] text-white' : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300'}`}>{period.label}</button>)}<input type="date" value={selectedCustomDate} onChange={e => { setSelectedCustomDate(e.target.value); setRegTimeScope('CUSTOM'); setSelectedRegistrationDate(e.target.value); setCalendarMonth(e.target.value ? new Date(`${e.target.value}T00:00:00`) : calendarMonth); setRegistrationPage(1); }} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-bold text-slate-700" /></div>
+          </div>
           <div className="flex items-center gap-3"><button type="button" aria-label="Previous month" onClick={() => setCalendarMonth(month => new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"><ChevronLeft className="h-4 w-4" /></button><h3 className="min-w-36 text-center text-sm font-black text-slate-800">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3><button type="button" aria-label="Next month" onClick={() => setCalendarMonth(month => new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"><ChevronRight className="h-4 w-4" /></button></div>
-        </div>
-        <div className="grid grid-cols-7 gap-2 text-center">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="py-1 text-[10px] font-black uppercase tracking-wide text-slate-400">{day}</div>)}
-          {calendarDays.map((date, index) => date ? <button type="button" key={date.key} onClick={() => { setSelectedRegistrationDate(date.key); setRegistrationPage(1); }} className={`min-h-20 rounded-xl border p-2 text-left transition-colors sm:min-h-24 ${selectedRegistrationDate === date.key ? 'border-emerald-600 bg-emerald-50 ring-2 ring-emerald-100' : 'border-slate-100 bg-slate-50 hover:border-emerald-200 hover:bg-emerald-50/50'}`}><span className="text-xs font-black text-slate-700">{date.day}</span><span className="mt-2 block text-[10px] font-bold text-slate-500">{dailyRegistrations.get(date.key)?.length || 0} registered</span></button> : <div key={`empty-${index}`} className="min-h-20 sm:min-h-24" />)}</div>
+          <div className="grid grid-cols-7 gap-2 text-center">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="py-1 text-[10px] font-black uppercase tracking-wide text-slate-400">{day}</div>)}
+          {calendarDays.map((date, index) => date ? <button type="button" key={date.key} onClick={() => { setSelectedRegistrationDate(date.key); setSelectedCustomDate(date.key); setRegTimeScope('CUSTOM'); setRegistrationPage(1); }} className={`min-h-20 rounded-xl border p-2 text-left transition-colors sm:min-h-24 ${selectedRegistrationDate === date.key ? 'border-emerald-600 bg-emerald-50 ring-2 ring-emerald-100' : 'border-slate-100 bg-slate-50 hover:border-emerald-200 hover:bg-emerald-50/50'}`}><span className="text-xs font-black text-slate-700">{date.day}</span><span className="mt-2 block text-[10px] font-bold text-slate-500">{dailyRegistrations.get(date.key)?.length || 0} registered</span></button> : <div key={`empty-${index}`} className="min-h-20 sm:min-h-24" />)}</div>
         {selectedRegistrationDate && <div className="space-y-4 border-t border-slate-100 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Registrations for {new Date(`${selectedRegistrationDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3><p className="text-xs text-slate-500">{selectedDayRegistrations.length} registered user{selectedDayRegistrations.length === 1 ? '' : 's'}</p></div><div className="flex items-center gap-2 text-xs text-slate-500"><span>Show</span>{[10, 50, 100].map(size => <button type="button" key={size} onClick={() => { setRegistrationPageSize(size); setRegistrationPage(1); }} className={`rounded-lg px-3 py-1.5 font-black ${registrationPageSize === size ? 'bg-[#0F4A2F] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{size}</button>)}<span>per page</span></div></div>
           {selectedDayRegistrations.length === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-xs text-slate-400">No registrations recorded for this date.</p> : <div className="overflow-x-auto rounded-xl border border-slate-100"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Role</th><th className="p-3">Ticket</th><th className="p-3">Registered at</th></tr></thead><tbody className="divide-y divide-slate-100">{visibleDayRegistrations.map(({ ticket, profile }) => <tr key={ticket.id}><td className="p-3 font-bold text-slate-800">{profile?.full_name || ticket.fullName || 'User'}</td><td className="p-3 text-slate-500">{profile?.email || ticket.email || '—'}</td><td className="p-3 text-slate-600">{profile?.role || 'user'}</td><td className="p-3 font-mono text-slate-600">{ticket.ticket_code || ticket.ticketCode || '—'}</td><td className="p-3 text-slate-500">{new Date(ticket.created_at || ticket.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td></tr>)}</tbody></table></div>}
           {selectedDayRegistrations.length > registrationPageSize && <div className="flex items-center justify-between text-xs"><span className="text-slate-500">Showing {(registrationPage - 1) * registrationPageSize + 1}–{Math.min(registrationPage * registrationPageSize, selectedDayRegistrations.length)} of {selectedDayRegistrations.length}</span><div className="flex items-center gap-2"><button type="button" disabled={registrationPage === 1} onClick={() => setRegistrationPage(page => Math.max(1, page - 1))} className="rounded-lg bg-slate-100 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span className="font-bold text-slate-700">Page {registrationPage} of {registrationTotalPages}</span><button type="button" disabled={registrationPage >= registrationTotalPages} onClick={() => setRegistrationPage(page => Math.min(registrationTotalPages, page + 1))} className="rounded-lg bg-slate-100 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div></div>}
+        </div>}
         </div>}
       </section>
 
