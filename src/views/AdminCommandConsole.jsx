@@ -1059,18 +1059,6 @@ export default function AdminCommandConsole({ onNavigate }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button
-              size="sm"
-              icon={UserPlus2}
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowAddUserModal(true);
-                setAddUserModalTab('DETAILS');
-              }}
-            >
-              ADD USER
-            </Button>
-
             <div className="p-2 bg-slate-100 rounded-xl text-slate-500 transition-transform duration-200">
               <ChevronDown className={`w-5 h-5 transition-transform duration-200 ${isRolesPanelOpen ? 'rotate-180' : ''}`} />
             </div>
@@ -1690,6 +1678,9 @@ export default function AdminCommandConsole({ onNavigate }) {
             <div className="flex items-center gap-2">
               <Button size="sm" icon={UserPlus2} onClick={() => { setShowAddUserModal(true); setAddUserModalTab('DETAILS'); }}>
                 ADD USER
+              </Button>
+              <Button size="sm" variant="secondary" icon={FolderPlus} onClick={() => { setShowAddUserModal(true); setAddUserModalTab('TYPE'); }}>
+                ADD ROLE / GROUP
               </Button>
 
               {[
