@@ -50,6 +50,10 @@ function resolveEffectiveTier(ticketTier, profileRole) {
   return ticketTier || 'general';
 }
 
+function isVipPass(tier, role) {
+  return `${tier || ''} ${role || ''}`.toLowerCase().includes('vip');
+}
+
 export default function GatekeeperScanner() {
   const { currentUser, userProfile, userRole, assignedGate } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -165,11 +169,18 @@ export default function GatekeeperScanner() {
       const parentId = ticket.parent_ticket_id || ticket.id;
 
       // Fetch primary host ticket and owner profile
-      const { data: primaryTicket } = await supabase
+      const { data: primaryTicket, error: primaryError } = await supabase
         .from('tickets')
-        .select('*, profiles(*)')
+        .select('*')
         .eq('id', parentId)
         .single();
+      if (primaryError || !primaryTicket) throw primaryError || new Error('VIP host ticket was not found.');
+
+      let hostProfile = ownerProfile;
+      if (!hostProfile && primaryTicket.owner_id) {
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', primaryTicket.owner_id).maybeSingle();
+        hostProfile = profile;
+      }
 
       // Fetch all child guest tickets
       const { data: guestTickets } = await supabase
@@ -185,15 +196,13 @@ export default function GatekeeperScanner() {
         .eq('checked_in_under_ticket_id', parentId)
         .order('scanned_at', { ascending: false });
 
-      if (primaryTicket) {
-        const hostName = ownerProfile?.full_name || primaryTicket.profiles?.full_name || primaryTicket.profiles?.email || 'VIP Delegate';
-        setVipManifestData({
-          primaryTicket,
-          hostName,
-          guestTickets: guestTickets || [],
-          recentGuestCheckins: guestCheckins || []
-        });
-      }
+      const hostName = hostProfile?.full_name || hostProfile?.email || 'VIP Delegate';
+      setVipManifestData({
+        primaryTicket,
+        hostName,
+        guestTickets: guestTickets || [],
+        recentGuestCheckins: guestCheckins || []
+      });
     } catch (e) {
       console.warn('VIP Manifest fetch error:', e);
     }
@@ -291,23 +300,26 @@ export default function GatekeeperScanner() {
         attendeeName = result.data.guest_name;
       }
 
-      const effectiveTier = resolveEffectiveTier(result?.data?.tier, ownerProfile?.role);
+      const effectiveTier = resolveEffectiveTier(result?.data?.tier || result?.data?.tier_name, ownerProfile?.role);
+      const isVipTicket = isVipPass(effectiveTier, ownerProfile?.role);
+      const isVipRescan = isVipTicket && result?.status === 'DUPLICATE' && result?.data;
 
       if (result?.success || result?.status === 'VALID') {
         soundFX.playSuccessChime();
         soundFX.triggerSuccessHaptic();
-      } else {
+      } else if (!isVipRescan) {
         soundFX.playWarningBuzzer();
         soundFX.triggerDuplicateHaptic();
       }
 
-      const isVipTicket = effectiveTier.startsWith('vip') || Boolean(result?.data?.parent_ticket_id);
-      if (isVipTicket && result?.data) {
+      const isVipTicketOrGuest = isVipTicket || Boolean(result?.data?.parent_ticket_id);
+      if (isVipTicketOrGuest && result?.data) {
         await fetchVipManifest(result.data, ownerProfile);
       }
 
       setScannedResult({
         ...result,
+        ...(isVipRescan ? { status: 'VIP_RESCAN', isVipRescan: true, message: `VIP HOST ALREADY CHECKED IN. Select any remaining guests accompanying ${attendeeName}.` } : {}),
         attendeeName,
         effectiveTier
       });
@@ -515,14 +527,14 @@ export default function GatekeeperScanner() {
       {scannedResult && (
         <div className="animate-fadeIn">
           <div className={`p-6 rounded-2xl border-2 shadow-lg ${
-            scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-50 border-emerald-400 text-emerald-950' :
+            scannedResult.success || scannedResult.status === 'VALID' || scannedResult.isVipRescan ? 'bg-emerald-50 border-emerald-400 text-emerald-950' :
             'bg-rose-50 border-rose-400 text-rose-950 animate-shake'
           }`}>
             <div className="flex items-start gap-4">
               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                scannedResult.success || scannedResult.status === 'VALID' ? 'bg-emerald-200/80 text-emerald-900' : 'bg-rose-200/80 text-rose-900'
+                scannedResult.success || scannedResult.status === 'VALID' || scannedResult.isVipRescan ? 'bg-emerald-200/80 text-emerald-900' : 'bg-rose-200/80 text-rose-900'
               }`}>
-                {scannedResult.success || scannedResult.status === 'VALID' ? <CheckCircle2 className="w-7 h-7" /> : <AlertTriangle className="w-7 h-7" />}
+                {scannedResult.success || scannedResult.status === 'VALID' || scannedResult.isVipRescan ? <CheckCircle2 className="w-7 h-7" /> : <AlertTriangle className="w-7 h-7" />}
               </div>
 
               <div className="flex-1 space-y-2">
