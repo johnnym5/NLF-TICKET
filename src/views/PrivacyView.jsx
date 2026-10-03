@@ -40,7 +40,7 @@ export default function PrivacyView() {
                   "Generating your unique scannable QR Digital Pass.",
                   "Real-time gate verification and wristband issuance.",
                   "Official attendance telemetry for ministerial reporting.",
-                  "Emergency notifications regarding event schedule changes."
+                  "Essential event updates, access changes, safety notices, and emergency schedule notifications."
                 ].map((item, i) => (
                   <li key={i} className="flex items-start gap-3 text-sage-deep shrink-0 font-medium">
                     <ChevronRight className="w-4 h-4 mt-1 text-sage-deep shrink-0" />
@@ -48,6 +48,32 @@ export default function PrivacyView() {
                   </li>
                 ))}
               </ul>
+            </section>
+
+            <section className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-sage-deep" />
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Notifications and Your Choices</h2>
+              </div>
+              <p className="text-slate-600 leading-relaxed font-medium">
+                We use the name, email address, account role, ticket and guest-pass details you or your VIP host provide to operate accreditation and deliver relevant event notices. Authorized administrators may send service, safety, access, and event-operation notices to all attendees or selected account groups. These notices are delivered in the event application. We do not use this system for marketing messages.
+              </p>
+              <p className="text-slate-600 leading-relaxed font-medium">
+                You may ask to correct your profile or guest-pass name, or raise a privacy concern with support@livestockcarnival.ng. Essential notices may still be sent where needed to provide event access or protect attendee safety. We share information only with authorized event operations and the service providers needed to run the accreditation system, subject to applicable law.
+              </p>
+            </section>
+
+            <section className="space-y-4">
+              <div className="flex items-center gap-3">
+                <FileText className="w-5 h-5 text-sage-deep" />
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Terms of Use</h2>
+              </div>
+              <p className="text-slate-600 leading-relaxed font-medium">
+                Use the digital pass assigned to you and present it for verification at the event. Passes are subject to the assigned access tier, event rules, capacity limits, and security checks. Do not copy, resell, alter, or use another attendee’s pass. VIP hosts are responsible for entering accurate guest names and sharing each guest pass only with that named guest. Administrators may correct account details, change access assignments, or revoke a pass when required for safety, fraud prevention, or event operations. Please contact support@livestockcarnival.ng to report an error or suspected misuse.
+              </p>
+              <p className="text-slate-600 leading-relaxed font-medium">
+                By registering or using a pass, you confirm that the information supplied is accurate and that you will follow venue instructions and applicable law. Access may be refused where a pass is invalid, duplicated, revoked, or used contrary to these terms. Event operations may update these terms when necessary; material updates will be made available through the event application.
+              </p>
             </section>
 
             <section className="space-y-4">

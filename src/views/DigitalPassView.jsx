@@ -46,7 +46,28 @@ export default function DigitalPassView({ onOpenAuth }) {
   const [selectedPassIndex, setSelectedPassIndex] = useState(0); // 0 = Primary Pass, 1..N = Guest Passes
   const [isSavingGuests, setIsSavingGuests] = useState(false);
   const [guestSavedNotice, setGuestSavedNotice] = useState(false);
+  const [notifications, setNotifications] = useState([]);
   const passRef = useRef(null);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let active = true;
+    const loadNotifications = async () => {
+      const { data, error } = await supabase.from('notifications').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(25);
+      if (!error && active) setNotifications(data || []);
+    };
+    loadNotifications();
+    const channel = supabase.channel(`user-notifications-${currentUser.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUser.id}` }, payload => setNotifications(prev => [payload.new, ...prev].slice(0, 25))).subscribe();
+    return () => { active = false; supabase.removeChannel(channel); };
+  }, [currentUser?.id]);
+
+  const markNotificationRead = async (notification) => {
+    if (notification.read_at) return;
+    const readAt = new Date().toISOString();
+    setNotifications(prev => prev.map(item => item.id === notification.id ? { ...item, read_at: readAt } : item));
+    const { error } = await supabase.from('notifications').update({ read_at: readAt }).eq('id', notification.id);
+    if (error) setNotifications(prev => prev.map(item => item.id === notification.id ? { ...item, read_at: null } : item));
+  };
 
   const primaryTier = resolveEffectiveTier(userTicket?.tier || attendeeRecord?.tier, userProfile?.role);
   const isVipTier = primaryTier.startsWith('vip');
@@ -241,6 +262,8 @@ export default function DigitalPassView({ onOpenAuth }) {
           <span className="section-label">Attendee Credential</span>
         </div>
       </ScrollReveal>
+
+      {notifications.length > 0 && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-black uppercase text-slate-800">Event notifications</h2><span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-800">{notifications.filter(item => !item.read_at).length} unread</span></div><div className="max-h-56 space-y-2 overflow-y-auto">{notifications.map(item => <button type="button" key={item.id} onClick={() => markNotificationRead(item)} className={`block w-full rounded-xl border p-3 text-left ${item.read_at ? 'border-slate-100 bg-slate-50' : 'border-emerald-100 bg-emerald-50/60'}`}><span className="flex justify-between gap-3"><strong className="text-xs text-slate-800">{item.title}</strong><time className="text-[9px] text-slate-400">{new Date(item.created_at).toLocaleString()}</time></span><span className="mt-1 block whitespace-pre-wrap text-xs text-slate-600">{item.message}</span></button>)}</div></section>}
 
       {/* VIP Guest Pass Selector Tabs */}
       {allPasses.length > 1 && (

@@ -49,7 +49,8 @@ import {
   UserPlus2,
   SlidersHorizontal,
   Eraser,
-  Save
+  Save,
+  Send
 } from 'lucide-react';
 
 const FESTIVAL_DAYS = [
@@ -137,6 +138,14 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
   const [profilePageSize, setProfilePageSize] = useState(100);
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
+  const [selectedProfileIds, setSelectedProfileIds] = useState([]);
+  const [bulkRole, setBulkRole] = useState('attendee');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [notificationTitle, setNotificationTitle] = useState('');
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [notificationAudience, setNotificationAudience] = useState('ALL');
+  const [notificationHistory, setNotificationHistory] = useState([]);
+  const [notificationBusy, setNotificationBusy] = useState(false);
 
   // Collapsible Panel State (Always Starts Closed)
   const [isRolesPanelOpen, setIsRolesPanelOpen] = useState(false);
@@ -203,6 +212,8 @@ export default function AdminCommandConsole({ onNavigate }) {
 
         if (ticketsRes.data) setTickets(ticketsRes.data);
         if (profilesRes.data) setProfiles(profilesRes.data);
+        const notificationRes = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(50);
+        if (!notificationRes.error && notificationRes.data) setNotificationHistory(notificationRes.data);
         if (gatesRes.data) setGates(gatesRes.data);
         if (rolesRes.data && rolesRes.data.length > 0) {
           setCustomRoles(rolesRes.data);
@@ -779,6 +790,39 @@ export default function AdminCommandConsole({ onNavigate }) {
     }
   };
 
+  const handleBulkRoleUpdate = async () => {
+    const targets = profiles.filter(p => selectedProfileIds.includes(p.id));
+    if (!targets.length) return;
+    setBulkBusy(true);
+    try {
+      const failures = [];
+      for (const profile of targets) {
+        try { await handleAssignRoleAndGate(profile.id, bulkRole, profile.assigned_gate_id); }
+        catch (error) { failures.push(`${profile.full_name || profile.email}: ${error.message}`); }
+      }
+      setSelectedProfileIds([]);
+      if (failures.length) alert(`Some account updates failed:\n${failures.join('\n')}`);
+    } finally { setBulkBusy(false); }
+  };
+
+  const handleSendNotification = async (event) => {
+    event.preventDefault();
+    const title = notificationTitle.trim();
+    const message = notificationMessage.trim();
+    const recipients = notificationAudience === 'ALL' ? profiles : profiles.filter(p => (p.role || 'user').toLowerCase() === notificationAudience.toLowerCase());
+    if (!title || !message || !recipients.length) return;
+    setNotificationBusy(true);
+    try {
+      const rows = recipients.map(profile => ({ user_id: profile.id, title, message, category: 'admin_broadcast', created_by: currentUser?.id }));
+      const { data, error } = await supabase.from('notifications').insert(rows).select('*');
+      if (error) throw error;
+      setNotificationHistory(prev => [...(data || []), ...prev].slice(0, 50));
+      setNotificationTitle(''); setNotificationMessage('');
+      alert(`Notification queued for ${recipients.length} user${recipients.length === 1 ? '' : 's'}.`);
+    } catch (error) { alert(`Notification failed: ${error.message}`); }
+    finally { setNotificationBusy(false); }
+  };
+
   const handleToggleRevocation = async (ticket) => {
     if (!window.confirm(`${ticket.status === 'revoked' ? 'Restore' : 'Revoke'} access for ticket ${ticket.ticket_code}?`)) return;
     try {
@@ -881,20 +925,30 @@ export default function AdminCommandConsole({ onNavigate }) {
       if (!matchesSearch) return false;
 
       const userRoleLower = (p.role || 'user').toLowerCase();
+      const hasVipEntitlement = tickets.some(ticket => ticket.owner_id === p.id && !ticket.parent_ticket_id && VIP_PLUS_ONES[resolveEffectiveTier(ticket.tier, p.role)] > 0);
 
       if (staffRoleFilter === 'STAFF') {
         return staffRoleNames.includes(userRoleLower);
       }
       if (staffRoleFilter === 'ATTENDEE') {
-        return !staffRoleNames.includes(userRoleLower) && userRoleLower !== 'user';
+        return !staffRoleNames.includes(userRoleLower) && !['user', 'unassigned'].includes(userRoleLower) && !hasVipEntitlement;
       }
       if (staffRoleFilter === 'USER') {
-        return userRoleLower === 'user';
+        return ['user', 'unassigned'].includes(userRoleLower) && !hasVipEntitlement;
       }
 
       return true;
     });
-  }, [profiles, searchTerm, staffRoleFilter, staffRoleNames]);
+  }, [profiles, searchTerm, staffRoleFilter, staffRoleNames, tickets]);
+
+  const vipGuestSummaries = useMemo(() => {
+    const primaries = tickets.filter(ticket => !ticket.parent_ticket_id);
+    return tickets.filter(ticket => ticket.parent_ticket_id && ticket.guest_name?.trim()).map(guest => {
+      const parent = primaries.find(ticket => ticket.id === guest.parent_ticket_id);
+      const owner = parent ? profiles.find(profile => profile.id === parent.owner_id) : profiles.find(profile => profile.id === guest.owner_id);
+      return owner ? { guest, owner } : null;
+    }).filter(Boolean);
+  }, [tickets, profiles]);
 
   const profileMap = useMemo(() => {
     return new Map(profiles.map(p => [p.id, p]));
@@ -1354,12 +1408,13 @@ export default function AdminCommandConsole({ onNavigate }) {
         </div>
 
         {/* 4 Feature Tabs (1 line on desktop, 2x2 grid on mobile with toggle open/close) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-100 p-2 rounded-2xl">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 bg-slate-100 p-2 rounded-2xl">
           {[
             { id: 'tickets', label: 'Tickets Registry', icon: BarChart3 },
             { id: 'gates', label: 'Venue Gates', icon: MapPin },
             { id: 'staff', label: 'Personnel & Roles', icon: Shield },
-            { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList }
+            { id: 'audit', label: 'Gatekeeper Audit', icon: ClipboardList },
+            { id: 'notifications', label: 'Notifications', icon: Send }
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1654,9 +1709,21 @@ export default function AdminCommandConsole({ onNavigate }) {
             </div>
           </div>
 
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input aria-label="Select visible users" type="checkbox" checked={paginatedProfiles.length > 0 && paginatedProfiles.every(p => selectedProfileIds.includes(p.id))} onChange={e => setSelectedProfileIds(prev => e.target.checked ? [...new Set([...prev, ...paginatedProfiles.map(p => p.id)])] : prev.filter(id => !paginatedProfiles.some(p => p.id === id)))} />
+              Select visible ({selectedProfileIds.length} selected)
+            </div>
+            <div className="flex items-center gap-2">
+              <select aria-label="Bulk role" value={bulkRole} onChange={e => setBulkRole(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold">{[...customRoles.map(r => r.name.toLowerCase()), 'user'].map(role => <option key={role} value={role}>{role === 'user' ? 'USER (UNASSIGNED)' : role.toUpperCase()}</option>)}</select>
+              <Button size="sm" disabled={!selectedProfileIds.length || bulkBusy} onClick={handleBulkRoleUpdate}>{bulkBusy ? 'Updating…' : `Update ${selectedProfileIds.length} selected`}</Button>
+            </div>
+          </div>
+          {vipGuestSummaries.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 space-y-2"><h4 className="text-xs font-black uppercase text-amber-950">Named VIP guests ({vipGuestSummaries.length})</h4><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{vipGuestSummaries.map(({ guest, owner }) => <div key={guest.id} className="rounded-xl border border-amber-100 bg-white px-3 py-2"><div className="text-sm font-bold text-slate-900">{guest.guest_name}</div><div className="text-[10px] text-slate-500">Under {owner.full_name || owner.email} · {guest.ticket_code}</div></div>)}</div></section>}
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
+                <th className="p-4">Select</th>
                 <th className="p-4">Personnel</th>
                 <th className="p-4">Status & Telemetry</th>
                 <th className="p-4">Assigned Role / Group</th>
@@ -1666,7 +1733,7 @@ export default function AdminCommandConsole({ onNavigate }) {
             </thead>
             <tbody className="divide-y">
               {filteredProfiles.length === 0 ? (
-                <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
+                <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No profiles found matching criteria.</td></tr>
               ) : (
                 paginatedProfiles.map(p => {
                   const online = isUserOnline(p.last_seen_at);
@@ -1678,6 +1745,7 @@ export default function AdminCommandConsole({ onNavigate }) {
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">
+                      <td className="p-4"><input aria-label={`Select ${p.full_name || p.email}`} type="checkbox" checked={selectedProfileIds.includes(p.id)} onChange={e => setSelectedProfileIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} /></td>
                       <td className="p-4">
                         <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
                         {isManualUser ? (
@@ -1741,7 +1809,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {isVipUser && (
+                  {(isVipUser || tickets.some(ticket => ticket.owner_id === p.id && !ticket.parent_ticket_id && VIP_PLUS_ONES[resolveEffectiveTier(ticket.tier, p.role)] > 0)) && (
                             <button
                               onClick={() => handleOpenAdminVipGuestModal(p)}
                               className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
@@ -1867,6 +1935,19 @@ export default function AdminCommandConsole({ onNavigate }) {
             )}
           </div>
         </div>
+      )}
+
+      {activeTab === 'notifications' && (
+        <section className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
+          <div><h3 className="text-sm font-black uppercase text-slate-900">Bulk Notifications</h3><p className="text-xs text-slate-500">Deliver an in-app notification to all accounts or a role group. Notifications appear in the user account.</p></div>
+          <form onSubmit={handleSendNotification} className="grid gap-4 md:grid-cols-2">
+            <label className="text-xs font-bold text-slate-600">Audience<select value={notificationAudience} onChange={e => setNotificationAudience(e.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 p-3"><option value="ALL">All users ({profiles.length})</option>{[...new Set(profiles.map(p => (p.role || 'user').toLowerCase()))].map(role => <option key={role} value={role}>{role} ({profiles.filter(p => (p.role || 'user').toLowerCase() === role).length})</option>)}</select></label>
+            <label className="text-xs font-bold text-slate-600">Title<input required maxLength={120} value={notificationTitle} onChange={e => setNotificationTitle(e.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 p-3" /></label>
+            <label className="text-xs font-bold text-slate-600 md:col-span-2">Message<textarea required maxLength={2000} rows={4} value={notificationMessage} onChange={e => setNotificationMessage(e.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 p-3" /></label>
+            <div className="md:col-span-2"><Button type="submit" icon={Send} disabled={notificationBusy}>{notificationBusy ? 'Sending…' : 'Send notification'}</Button></div>
+          </form>
+          <div><h4 className="text-xs font-black uppercase text-slate-700 mb-2">Recent notifications</h4>{notificationHistory.length ? <div className="divide-y divide-slate-100">{notificationHistory.map(item => <article key={item.id} className="py-3"><div className="flex justify-between gap-3"><strong className="text-sm text-slate-800">{item.title}</strong><time className="text-[10px] text-slate-400">{new Date(item.created_at).toLocaleString()}</time></div><p className="text-xs text-slate-500">{item.message}</p></article>)}</div> : <p className="text-xs text-slate-400">No broadcasts yet. Apply the notification migration to enable delivery.</p>}</div>
+        </section>
       )}
 
       {/* ADMIN VIP GUEST MANIFEST POPUP MODAL */}
