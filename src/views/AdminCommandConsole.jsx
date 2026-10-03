@@ -304,6 +304,20 @@ export default function AdminCommandConsole({ onNavigate }) {
 
         const localGuests = tickets.filter(t => t.parent_ticket_id === primaryTicket.id);
         const guestTickets = fetchedGuests || localGuests;
+        const guestIds = guestTickets.map(guest => guest.id).filter(Boolean);
+        let attendanceMap = {};
+        if (guestIds.length) {
+          const { data: attendanceRows, error: attendanceError } = await supabase
+            .from('vip_guest_attendance')
+            .select('ticket_id, event_day, scanned_at')
+            .in('ticket_id', guestIds);
+          if (!attendanceError && attendanceRows) {
+            attendanceMap = attendanceRows.reduce((map, row) => {
+              (map[row.ticket_id] ||= {})[row.event_day] = row;
+              return map;
+            }, {});
+          }
+        }
 
         const effectiveTier = resolveEffectiveTier(primaryTicket.tier, profile.role);
         const defaultCount = VIP_PLUS_ONES[effectiveTier] || 10;
@@ -326,6 +340,7 @@ export default function AdminCommandConsole({ onNavigate }) {
           primaryTicket,
           slotCount: initialCount,
           guestTicketsMap: ticketsMap,
+          attendanceMap,
           guestNamesMap: map
         });
       } else {
@@ -943,15 +958,6 @@ export default function AdminCommandConsole({ onNavigate }) {
       return true;
     });
   }, [profiles, searchTerm, staffRoleFilter, staffRoleNames, tickets]);
-
-  const vipGuestSummaries = useMemo(() => {
-    const primaries = tickets.filter(ticket => !ticket.parent_ticket_id);
-    return tickets.filter(ticket => ticket.parent_ticket_id && ticket.guest_name?.trim()).map(guest => {
-      const parent = primaries.find(ticket => ticket.id === guest.parent_ticket_id);
-      const owner = parent ? profiles.find(profile => profile.id === parent.owner_id) : profiles.find(profile => profile.id === guest.owner_id);
-      return owner ? { guest, owner } : null;
-    }).filter(Boolean);
-  }, [tickets, profiles]);
 
   const dailyRegistrations = useMemo(() => {
     const byDate = new Map();
@@ -1571,7 +1577,6 @@ export default function AdminCommandConsole({ onNavigate }) {
             </div>
             <div className="space-y-3"><span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">Physical wristband band preview</span><div className="p-6 rounded-2xl text-white shadow-lg space-y-4 relative overflow-hidden transition-all flex flex-col justify-between h-48" style={{ backgroundColor: customColorHex }}><div className="flex items-center justify-between"><div className="flex items-center gap-2"><img src="/logo.jpeg" alt="NLF Logo" className="w-8 h-8 rounded-lg border border-white/30" /><div><span className="font-black text-xs uppercase tracking-tight block">NLF 2026 CARNIVAL</span><span className="text-[8px] font-black uppercase opacity-80 block tracking-widest">OFFICIAL GATE WRISTBAND</span></div></div><span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/30">{selectedRoleForColor.toUpperCase()}</span></div><div className="border-t border-white/20 pt-3 flex items-end justify-between"><div><span className="text-[9px] font-black uppercase opacity-75 block">Band color designation</span><p className="text-base font-black uppercase tracking-wide">{customColorName}</p></div><div className="font-mono text-xs font-black tracking-widest bg-black/30 px-3 py-1 rounded-lg">GCC-2026-BAND</div></div></div></div>
           </div>}
-          {vipGuestSummaries.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 space-y-2"><h4 className="text-xs font-black uppercase text-amber-950">Named VIP guests ({vipGuestSummaries.length})</h4><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{vipGuestSummaries.map(({ guest, owner }) => <div key={guest.id} className="rounded-xl border border-amber-100 bg-white px-3 py-2"><div className="text-sm font-bold text-slate-900">{guest.guest_name}</div><div className="text-[10px] text-slate-500">Under {owner.full_name || owner.email} · {guest.ticket_code}</div></div>)}</div></section>}
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
@@ -1594,12 +1599,18 @@ export default function AdminCommandConsole({ onNavigate }) {
                   const wristband = getRoleWristbandObj(p.role);
                   const isManualUser = p.email && p.email.startsWith('manual-');
                   const isVipUser = (p.role || '').toLowerCase().includes('vip');
+                  const primaryTicket = tickets.find(ticket => ticket.owner_id === p.id && !ticket.parent_ticket_id);
+                  const vipGuests = primaryTicket ? tickets.filter(ticket => ticket.parent_ticket_id === primaryTicket.id) : [];
+                  const hasVipGuests = vipGuests.length > 0 || isVipUser;
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="p-4"><input aria-label={`Select ${p.full_name || p.email}`} type="checkbox" checked={selectedProfileIds.includes(p.id)} onChange={e => setSelectedProfileIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} /></td>
                       <td className="p-4">
-                        <div className="font-bold text-slate-900">{p.full_name || 'User'}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-slate-900">{p.full_name || 'User'}</span>
+                          {hasVipGuests && <button type="button" onClick={() => handleOpenAdminVipGuestModal(p)} className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-black text-amber-900 hover:bg-amber-100">{vipGuests.length} {vipGuests.length === 1 ? 'extra' : 'extras'}</button>}
+                        </div>
                         {isManualUser ? (
                           <span className="inline-block bg-amber-50 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider mt-0.5">
                             MANUAL ENTRY
@@ -1661,17 +1672,6 @@ export default function AdminCommandConsole({ onNavigate }) {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                  {(isVipUser || tickets.some(ticket => ticket.owner_id === p.id && !ticket.parent_ticket_id && VIP_PLUS_ONES[resolveEffectiveTier(ticket.tier, p.role)] > 0)) && (
-                            <button
-                              onClick={() => handleOpenAdminVipGuestModal(p)}
-                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
-                              title="Manage VIP Accompanying Guest Names"
-                            >
-                              <Users className="w-3.5 h-3.5 text-amber-600" />
-                              <span>VIP Guests</span>
-                            </button>
-                          )}
-
                           <button
                             onClick={() => handleDeleteProfile(p.id)}
                             className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
@@ -1882,6 +1882,15 @@ export default function AdminCommandConsole({ onNavigate }) {
                   const g = adminVipGuestModalData.guestTicketsMap[idx];
                   const passCode = g?.ticket_code || g?.ticketCode || (adminVipGuestModalData.primaryTicket?.ticket_code ? `${adminVipGuestModalData.primaryTicket.ticket_code}-G${idx + 1}` : `G${idx + 1}`);
                   const checkedInUnderHost = g?.checked_in_under_ticket_id === adminVipGuestModalData.primaryTicket?.id;
+                  const storedAttendance = adminVipGuestModalData.attendanceMap?.[g?.id] || {};
+                  const legacyAttendance = g?.days_attended || g?.daysAttended || {};
+                  const scanDate = g?.scanned_at ? new Date(g.scanned_at).toISOString().slice(0, 10) : null;
+                  const attendanceDays = FESTIVAL_DAYS.map((day, dayIndex) => {
+                    const eventDate = `2026-11-${String(21 + dayIndex).padStart(2, '0')}`;
+                    const scanned = Boolean(storedAttendance[day.id]) || Boolean(legacyAttendance[day.id]) || scanDate === eventDate || (!scanDate && dayIndex === 0 && ['used', 'CHECKED_IN'].includes(g?.status));
+                    return { ...day, eventDate, scanned, scannedAt: storedAttendance[day.id]?.scanned_at || (scanDate === eventDate ? g?.scanned_at : null) };
+                  });
+                  const attendedDays = attendanceDays.filter(day => day.scanned).length;
 
                   return (
                     <div key={idx} className={`p-2.5 rounded-2xl border space-y-1.5 ${checkedInUnderHost ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}>
@@ -1907,6 +1916,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                         </Badge>
                       </div>
                       {checkedInUnderHost && <div className="text-[9px] font-black uppercase text-emerald-800">Scanned under {adminVipGuestModalData.profile.full_name || 'VIP host'}{g?.scanned_at ? ` · ${new Date(g.scanned_at).toLocaleString()}` : ''}</div>}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1"><span className="mr-1 text-[9px] font-black uppercase text-slate-500">Attended {attendedDays}/3 days</span>{attendanceDays.map(day => <span key={day.id} title={day.scannedAt ? `Scanned ${new Date(day.scannedAt).toLocaleString()}` : day.scanned ? 'Scanned (legacy record)' : 'Not scanned'} className={`rounded-md border px-2 py-1 text-[8px] font-black uppercase ${day.scanned ? 'border-emerald-200 bg-emerald-100 text-emerald-800' : 'border-slate-200 bg-white text-slate-400'}`}>{day.label}: {day.scanned ? 'Scanned' : 'Not scanned'}</span>)}</div>
 
                       {/* Display Pass Code & Unique Ticket ID */}
                       <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-200/60">
