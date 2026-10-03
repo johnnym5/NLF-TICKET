@@ -138,6 +138,10 @@ export default function AdminCommandConsole({ onNavigate }) {
   const [ticketCurrentPage, setTicketCurrentPage] = useState(1);
   const [profilePageSize, setProfilePageSize] = useState(100);
   const [profileCurrentPage, setProfileCurrentPage] = useState(1);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [selectedRegistrationDate, setSelectedRegistrationDate] = useState('');
+  const [registrationPageSize, setRegistrationPageSize] = useState(10);
+  const [registrationPage, setRegistrationPage] = useState(1);
   const [selectedProfileIds, setSelectedProfileIds] = useState([]);
   const [bulkRole, setBulkRole] = useState('attendee');
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -947,6 +951,36 @@ export default function AdminCommandConsole({ onNavigate }) {
     }).filter(Boolean);
   }, [tickets, profiles]);
 
+  const dailyRegistrations = useMemo(() => {
+    const byDate = new Map();
+    tickets.filter(ticket => !ticket.parent_ticket_id).forEach(ticket => {
+      const timestamp = ticket.created_at || ticket.createdAt;
+      if (!timestamp) return;
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return;
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      if (!byDate.has(key)) byDate.set(key, []);
+      const profile = profiles.find(item => item.id === ticket.owner_id);
+      byDate.get(key).push({ ticket, profile });
+    });
+    return byDate;
+  }, [tickets, profiles]);
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstWeekday = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      return { day, key: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` };
+    })];
+  }, [calendarMonth]);
+
+  const selectedDayRegistrations = selectedRegistrationDate ? (dailyRegistrations.get(selectedRegistrationDate) || []) : [];
+  const registrationTotalPages = Math.max(1, Math.ceil(selectedDayRegistrations.length / registrationPageSize));
+  const visibleDayRegistrations = selectedDayRegistrations.slice((registrationPage - 1) * registrationPageSize, registrationPage * registrationPageSize);
+
   const profileMap = useMemo(() => {
     return new Map(profiles.map(p => [p.id, p]));
   }, [profiles]);
@@ -1276,6 +1310,21 @@ export default function AdminCommandConsole({ onNavigate }) {
           })}
         </div>
       </div>
+
+      {/* REGISTRATION CALENDAR */}
+      <section className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 className="text-sm font-black uppercase text-slate-900">Registration Calendar</h2><p className="text-xs text-slate-500">Registrations by day. Select a date to view the registered users.</p></div>
+          <div className="flex items-center gap-3"><button type="button" aria-label="Previous month" onClick={() => setCalendarMonth(month => new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"><ChevronLeft className="h-4 w-4" /></button><h3 className="min-w-36 text-center text-sm font-black text-slate-800">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3><button type="button" aria-label="Next month" onClick={() => setCalendarMonth(month => new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"><ChevronRight className="h-4 w-4" /></button></div>
+        </div>
+        <div className="grid grid-cols-7 gap-2 text-center">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="py-1 text-[10px] font-black uppercase tracking-wide text-slate-400">{day}</div>)}
+          {calendarDays.map((date, index) => date ? <button type="button" key={date.key} onClick={() => { setSelectedRegistrationDate(date.key); setRegistrationPage(1); }} className={`min-h-20 rounded-xl border p-2 text-left transition-colors sm:min-h-24 ${selectedRegistrationDate === date.key ? 'border-emerald-600 bg-emerald-50 ring-2 ring-emerald-100' : 'border-slate-100 bg-slate-50 hover:border-emerald-200 hover:bg-emerald-50/50'}`}><span className="text-xs font-black text-slate-700">{date.day}</span><span className="mt-2 block text-[10px] font-bold text-slate-500">{dailyRegistrations.get(date.key)?.length || 0} registered</span></button> : <div key={`empty-${index}`} className="min-h-20 sm:min-h-24" />)}</div>
+        {selectedRegistrationDate && <div className="space-y-4 border-t border-slate-100 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Registrations for {new Date(`${selectedRegistrationDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3><p className="text-xs text-slate-500">{selectedDayRegistrations.length} registered user{selectedDayRegistrations.length === 1 ? '' : 's'}</p></div><div className="flex items-center gap-2 text-xs text-slate-500"><span>Show</span>{[10, 50, 100].map(size => <button type="button" key={size} onClick={() => { setRegistrationPageSize(size); setRegistrationPage(1); }} className={`rounded-lg px-3 py-1.5 font-black ${registrationPageSize === size ? 'bg-[#0F4A2F] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{size}</button>)}<span>per page</span></div></div>
+          {selectedDayRegistrations.length === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-xs text-slate-400">No registrations recorded for this date.</p> : <div className="overflow-x-auto rounded-xl border border-slate-100"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Role</th><th className="p-3">Ticket</th><th className="p-3">Registered at</th></tr></thead><tbody className="divide-y divide-slate-100">{visibleDayRegistrations.map(({ ticket, profile }) => <tr key={ticket.id}><td className="p-3 font-bold text-slate-800">{profile?.full_name || ticket.fullName || 'User'}</td><td className="p-3 text-slate-500">{profile?.email || ticket.email || '—'}</td><td className="p-3 text-slate-600">{profile?.role || 'user'}</td><td className="p-3 font-mono text-slate-600">{ticket.ticket_code || ticket.ticketCode || '—'}</td><td className="p-3 text-slate-500">{new Date(ticket.created_at || ticket.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td></tr>)}</tbody></table></div>}
+          {selectedDayRegistrations.length > registrationPageSize && <div className="flex items-center justify-between text-xs"><span className="text-slate-500">Showing {(registrationPage - 1) * registrationPageSize + 1}–{Math.min(registrationPage * registrationPageSize, selectedDayRegistrations.length)} of {selectedDayRegistrations.length}</span><div className="flex items-center gap-2"><button type="button" disabled={registrationPage === 1} onClick={() => setRegistrationPage(page => Math.max(1, page - 1))} className="rounded-lg bg-slate-100 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span className="font-bold text-slate-700">Page {registrationPage} of {registrationTotalPages}</span><button type="button" disabled={registrationPage >= registrationTotalPages} onClick={() => setRegistrationPage(page => Math.min(registrationTotalPages, page + 1))} className="rounded-lg bg-slate-100 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div></div>}
+        </div>}
+      </section>
 
       {/* TAB 1: TICKETS REGISTRY */}
       {activeTab === 'tickets' && (
