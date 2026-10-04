@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth, TIER_WRISTBANDS, TIER_LABELS, VIP_PLUS_ONES, generateTicketCode } from '../context/AuthContext';
+import { useAuth, TIER_WRISTBANDS, VIP_PLUS_ONES, generateTicketCode } from '../context/AuthContext';
 import { sanitizeText } from '../utils/sanitizer';
 import { checkRateLimit } from '../utils/rate-limiter';
 import StaffLogin from '../components/StaffLogin';
@@ -102,11 +102,17 @@ function isUserOnline(lastSeenStr) {
 }
 
 function resolveEffectiveTier(ticketTier, profileRole) {
-  const roleLower = (profileRole || '').toLowerCase();
-  if (roleLower.includes('vip tier 1') || roleLower === 'vip_1') return 'vip_1';
-  if (roleLower.includes('vip tier 2') || roleLower === 'vip_2') return 'vip_2';
-  if (roleLower.includes('vip tier 3') || roleLower === 'vip_3') return 'vip_3';
-  return ticketTier || 'general';
+  const roleLower = (profileRole || '').trim().toLowerCase().replace(/[- ]+/g, '_');
+  if (roleLower.includes('vip_tier_1') || roleLower === 'vip_1') return 'vip_1';
+  if (roleLower.includes('vip_tier_2') || roleLower === 'vip_2') return 'vip_2';
+  if (roleLower.includes('vip_tier_3') || roleLower === 'vip_3') return 'vip_3';
+  if (roleLower === 'vip_silver') return 'vip_1';
+  if (roleLower === 'vip_gold') return 'vip_2';
+  if (roleLower === 'vip_platinum') return 'vip_3';
+  const tierValue = (ticketTier || 'general').trim().toLowerCase().replace(/[- ]+/g, '_');
+  const normalizedTicketTier = ({ vip_silver: 'vip_1', vip_gold: 'vip_2', vip_platinum: 'vip_3' })[tierValue] || tierValue;
+  if (['vip_1', 'vip_2', 'vip_3'].includes(normalizedTicketTier)) return normalizedTicketTier;
+  return normalizedTicketTier || 'general';
 }
 
 export default function AdminCommandConsole({ onNavigate }) {
@@ -914,15 +920,72 @@ export default function AdminCommandConsole({ onNavigate }) {
 
   const getRoleWristbandObj = (roleName) => {
     if (!roleName) return { name: 'Emerald Green', hex: '#0F4A2F' };
-    const found = customRoles.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+    const normalizedRole = roleName.trim().toLowerCase().replace(/[_-]+/g, ' ');
+    const found = customRoles.find(r => r.name.trim().toLowerCase().replace(/[_-]+/g, ' ') === normalizedRole);
     if (found) return { name: found.wristband_color || 'Emerald Green', hex: found.wristband_hex || '#0F4A2F' };
+    const roleDefaults = {
+      admin: { name: 'Obsidian Platinum', hex: '#0F172A' },
+      director: { name: 'Champagne Gold Foil', hex: '#D97706' },
+      'tech support': { name: 'Cobalt Blue Lanyard', hex: '#2563EB' },
+      'team member': { name: 'Cobalt Blue Lanyard', hex: '#2563EB' },
+      creatives: { name: 'Royal Purple Band', hex: '#7E22CE' },
+      security: { name: 'Crimson Red Band', hex: '#DC2626' },
+      gatekeeper: { name: 'Emerald Green', hex: '#0F4A2F' },
+      'vip tier 1': { name: 'Metallic Silver Foil', hex: '#64748B' },
+      vip_1: { name: 'Metallic Silver Foil', hex: '#64748B' },
+      'vip tier 2': { name: 'Champagne Gold Foil', hex: '#D97706' },
+      vip_2: { name: 'Champagne Gold Foil', hex: '#D97706' },
+      'vip tier 3': { name: 'Obsidian Platinum', hex: '#0F172A' },
+      vip_3: { name: 'Obsidian Platinum', hex: '#0F172A' },
+      vendors: { name: 'Tangerine Orange', hex: '#EA580C' },
+      vendor: { name: 'Tangerine Orange', hex: '#EA580C' },
+      exhibitors: { name: 'Royal Purple Band', hex: '#7E22CE' },
+      exhibitor: { name: 'Royal Purple Band', hex: '#7E22CE' },
+      associate: { name: 'Royal Purple Band', hex: '#7E22CE' },
+      attendee: { name: 'Emerald Green', hex: '#0F4A2F' },
+      general: { name: 'Emerald Green', hex: '#0F4A2F' }
+    };
+    if (roleDefaults[normalizedRole]) return roleDefaults[normalizedRole];
+    const tierKey = normalizedRole.replace(/ /g, '_');
+    const tierBand = TIER_WRISTBANDS[tierKey] || TIER_WRISTBANDS[normalizedRole.toUpperCase().replace(/ /g, '_')];
+    if (tierBand) {
+      const preset = COLOR_PRESETS.find(color => tierBand.toLowerCase().includes(color.name.toLowerCase().replace(/ (foil|badge|band|lanyard)$/i, '')));
+      if (preset) return { name: tierBand, hex: preset.hex };
+    }
     return { name: 'Emerald Green', hex: '#0F4A2F' };
   };
 
-  const gatekeeperAudit = useMemo(() => {
-    const staffProfiles = profiles.filter(p => staffRoleNames.includes((p.role || '').toLowerCase()));
+  const getTicketRolePresentation = (profileRole, effectiveTier) => {
+    const normalizedRole = (profileRole || 'attendee').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    const roleDefinition = customRoles.find(role => role.name.trim().toLowerCase().replace(/[_-]+/g, ' ') === normalizedRole);
+    const isStaff = roleDefinition?.category === 'staff' || staffRoleNames.some(role => role.replace(/[_-]+/g, ' ') === normalizedRole);
+    const isVip = ['vip_1', 'vip_2', 'vip_3'].includes(effectiveTier);
 
-    return staffProfiles.map(staff => {
+    if (isStaff) {
+      const roleLabel = roleDefinition?.name || normalizedRole.replace(/\b\w/g, letter => letter.toUpperCase());
+      return { label: `${roleLabel} · Staff`, ...getRoleWristbandObj(roleDefinition?.name || normalizedRole) };
+    }
+
+    if (isVip) {
+      const level = effectiveTier.slice(-1);
+      const roleName = `VIP Tier ${level}`;
+      return { label: roleName, ...getRoleWristbandObj(roleDefinition?.category === 'attendee' ? roleDefinition.name : roleName) };
+    }
+
+    if (roleDefinition && !['user', 'attendee', 'general', 'unassigned'].includes(normalizedRole)) {
+      return { label: roleDefinition.name, ...getRoleWristbandObj(roleDefinition.name) };
+    }
+
+    return { label: 'General', ...getRoleWristbandObj('attendee') };
+  };
+
+  const gatekeeperAudit = useMemo(() => {
+    // Audit gate accounts only. Other personnel can create manual tickets or
+    // have roles classified as staff, but they are not gatekeepers unless
+    // their assigned role is explicitly `gatekeeper`.
+    const gatekeeperProfiles = profiles.filter(p => (p.role || '').trim().toLowerCase() === 'gatekeeper');
+
+    return gatekeeperProfiles.map(staff => {
       const scansCount = tickets.filter(t => t.scanned_by === staff.id).length;
       const manualCount = tickets.filter(t => t.created_by === staff.id && t.is_manual).length;
       return {
@@ -931,7 +994,7 @@ export default function AdminCommandConsole({ onNavigate }) {
         manualCount
       };
     });
-  }, [profiles, tickets, staffRoleNames]);
+  }, [profiles, tickets]);
 
   const filteredProfiles = useMemo(() => {
     return profiles.filter(p => {
@@ -1269,6 +1332,7 @@ export default function AdminCommandConsole({ onNavigate }) {
                     const displayName = owner?.full_name || t.fullName || 'Attendee';
                     const displayEmail = owner?.email || t.email || '';
                     const effectiveTier = resolveEffectiveTier(t.tier, owner?.role);
+                    const ticketPresentation = getTicketRolePresentation(owner?.role, effectiveTier);
 
                     const childGuests = tickets.filter(c => c.parent_ticket_id === t.id);
                     const guestCount = childGuests.length;
@@ -1313,8 +1377,13 @@ export default function AdminCommandConsole({ onNavigate }) {
                             {displayEmail && <span className="text-slate-400 font-sans font-medium">({displayEmail})</span>}
                           </div>
                         </td>
-                        <td className="p-4 uppercase font-black">
-                          {effectiveTier === 'vip_1' ? 'VIP TIER 1' : effectiveTier === 'vip_2' ? 'VIP TIER 2' : effectiveTier === 'vip_3' ? 'VIP TIER 3' : 'GENERAL'}
+                        <td className="p-4">
+                          <span
+                            className="inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide"
+                            style={{ color: ticketPresentation.hex, backgroundColor: `${ticketPresentation.hex}14`, borderColor: `${ticketPresentation.hex}55` }}
+                          >
+                            {ticketPresentation.label}
+                          </span>
                         </td>
                         <td className="p-4">
                           {t.is_manual ? <Badge variant="gold">MANUAL</Badge> : <Badge variant="pending">DIGITAL</Badge>}
@@ -1751,7 +1820,7 @@ export default function AdminCommandConsole({ onNavigate }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {gatekeeperAudit.length === 0 ? (
-              <p className="text-xs text-slate-400 italic p-4">No staff or gatekeepers registered yet.</p>
+              <p className="text-xs text-slate-400 italic p-4">No gatekeepers registered yet.</p>
             ) : (
               gatekeeperAudit.map(gk => {
                 const online = isUserOnline(gk.last_seen_at);

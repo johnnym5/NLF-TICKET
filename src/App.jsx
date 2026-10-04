@@ -9,6 +9,7 @@ import DiagnosticsConsole from './views/DiagnosticsConsole';
 import PrivacyView from './views/PrivacyView';
 import RegistryView from './views/RegistryView';
 import ComplianceView from './views/ComplianceView';
+import InfoPageView from './views/InfoPageView';
 import AuthModal from './components/AuthModal';
 
 function AppContent() {
@@ -29,6 +30,7 @@ function AppContent() {
     else if (route === 'privacy') path = '/privacy';
     else if (route === 'registry') path = '/registry';
     else if (route === 'compliance') path = '/compliance';
+    else if (['terms', 'refunds', 'cookies', 'accessibility', 'faq', 'contact'].includes(route)) path = `/${route}`;
 
     window.history.pushState({ route }, '', path);
     setCurrentRoute(route);
@@ -46,6 +48,7 @@ function AppContent() {
       else if (path === 'privacy') setCurrentRoute('privacy');
       else if (path === 'registry') setCurrentRoute('registry');
       else if (path === 'compliance') setCurrentRoute('compliance');
+      else if (['terms', 'refunds', 'cookies', 'accessibility', 'faq', 'contact'].includes(path)) setCurrentRoute(path);
 
       const params = new URLSearchParams(window.location.search);
       const invite = params.get('invite');
@@ -126,6 +129,10 @@ function AppContent() {
           {currentRoute === 'compliance' && (
             <ComplianceView />
           )}
+
+          {['terms', 'refunds', 'cookies', 'accessibility', 'faq', 'contact'].includes(currentRoute) && (
+            <InfoPageView page={currentRoute} onNavigate={navigateTo} />
+          )}
         </main>
 
         <footer className="bg-white border-t border-slate-200 py-4 sm:py-6">
@@ -154,16 +161,20 @@ function AppContent() {
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
                 © 2026 NLF Steering Committee. v2.0
               </p>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
                  {[
+                   { id: 'terms', label: 'Terms of Use' },
                    { id: 'privacy', label: 'Privacy' },
-                   { id: 'registry', label: 'Registry' },
-                   { id: 'compliance', label: 'Compliance' }
+                   { id: 'refunds', label: 'Refunds & Cancellations' },
+                   { id: 'cookies', label: 'Cookies' },
+                   { id: 'accessibility', label: 'Accessibility' },
+                   { id: 'faq', label: 'FAQ' },
+                   { id: 'contact', label: 'Contact' }
                  ].map(item => (
                    <button
                      key={item.id}
                      onClick={() => navigateTo(item.id)}
-                     className={`text-[8px] font-black uppercase tracking-widest transition-colors ${
+                     className={`text-[8px] font-black uppercase tracking-widest transition-colors whitespace-nowrap ${
                        currentRoute === item.id ? 'text-slate-900' : 'text-slate-400 hover:text-slate-900'
                      }`}
                    >

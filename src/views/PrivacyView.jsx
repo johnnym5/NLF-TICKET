@@ -66,19 +66,6 @@ export default function PrivacyView() {
             <section className="space-y-4">
               <div className="flex items-center gap-3">
                 <FileText className="w-5 h-5 text-sage-deep" />
-                <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Terms of Use</h2>
-              </div>
-              <p className="text-slate-600 leading-relaxed font-medium">
-                Use the digital pass assigned to you and present it for verification at the event. Passes are subject to the assigned access tier, event rules, capacity limits, and security checks. Do not copy, resell, alter, or use another attendee’s pass. VIP hosts are responsible for entering accurate guest names and sharing each guest pass only with that named guest. Administrators may correct account details, change access assignments, or revoke a pass when required for safety, fraud prevention, or event operations. Please contact support@livestockcarnival.ng to report an error or suspected misuse.
-              </p>
-              <p className="text-slate-600 leading-relaxed font-medium">
-                By registering or using a pass, you confirm that the information supplied is accurate and that you will follow venue instructions and applicable law. Access may be refused where a pass is invalid, duplicated, revoked, or used contrary to these terms. Event operations may update these terms when necessary; material updates will be made available through the event application.
-              </p>
-            </section>
-
-            <section className="space-y-4">
-              <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-sage-deep" />
                 <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Data Retention</h2>
               </div>
               <p className="text-slate-600 leading-relaxed font-medium">
