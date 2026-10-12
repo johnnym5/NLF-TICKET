@@ -35,8 +35,8 @@ Key capabilities include:
 |---|---|---|
 | Public Attendee | Registers for a free entry pass and views digital QR pass | Public Self-Registration |
 | VIP Delegate | Receives a tier-specific pass and accompanying guest pass allotment | VIP Link / Registration |
-| Gatekeeper / Security | Uses the mobile scanner to validate attendee passes at venue gates | `qrscanner1@livestockcarnival.ng` |
-| Super Administrator | Full access to Admin Dashboard Console, telemetry, and user management | `admin@livestockcarnival.ng` (`.Carny@26`) |
+| Gatekeeper / Security | Uses the mobile scanner to validate attendee passes at venue gates | `Username` |
+| Super Administrator | Full access to Admin Dashboard Console, telemetry, and user management | `Username` (`Password`) |
 
 ---
 
